@@ -61,6 +61,12 @@ noisechisel-torch image.fits -h 0 -o image_detected.fits --device cuda --tilesiz
 
 ## Validation against Gnuastro
 
+GPU vs Gnuastro on Google Colab:
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PabloMSanAla/noisechisel/blob/cupy-ccl/notebooks/colab_gpu_benchmark.ipynb)
+(`notebooks/colab_gpu_benchmark.ipynb`: checks the CUDA/CuPy install, installs
+Gnuastro 0.24, runs the tests and benchmarks Gnuastro vs torch CPU vs torch CUDA).
+
+
 ```bash
 python benchmarks/compare_gnuastro.py /path/to/*.fits --workdir out --device cpu --csv results.csv
 ```

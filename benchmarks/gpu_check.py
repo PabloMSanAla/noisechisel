@@ -22,7 +22,7 @@ def synthetic(n=4088, sky=0.2846, sigma=7.08e-6, nsrc=4000, seed=0):
     rng = np.random.default_rng(seed)
     img = rng.normal(sky, sigma, (n, n)).astype(np.float64)
     for _ in range(nsrc):
-        y, x = rng.integers(16, n - 16, 2)
+        y, x = rng.integers(32, n - 32, 2)
         s = rng.uniform(1.0, 5.0)
         a = rng.lognormal(np.log(10 * sigma), 1.2)
         r = int(5 * s) + 1
