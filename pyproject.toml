@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "noisechisel-torch"
+version = "0.1.0"
+description = "PyTorch (CPU/GPU) re-implementation of Gnuastro's NoiseChisel detection program"
+readme = "README.md"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "scipy",
+    "torch>=2.0",
+]
+keywords = ["astronomy", "detection", "sky", "noisechisel", "gnuastro", "pytorch"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+
+[project.urls]
+Homepage = "https://github.com/PabloMSanAla/noisechisel"
+
+[project.optional-dependencies]
+fits = ["astropy"]
+test = ["pytest", "astropy"]
+
+[project.scripts]
+noisechisel-torch = "noisechisel_torch.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

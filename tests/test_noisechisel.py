@@ -1,0 +1,199 @@
+import math
+import os
+import shutil
+import subprocess
+
+import numpy as np
+import pytest
+import torch
+
+import noisechisel_torch.core as C
+from noisechisel_torch import DEFAULT_KERNEL, NoiseChisel, noisechisel
+
+
+def synthetic_image(n=800, sky=100.0, sigma=5.0, nsrc=150, seed=1):
+    rng = np.random.default_rng(seed)
+    img = rng.normal(sky, sigma, (n, n))
+    yy, xx = np.mgrid[:n, :n]
+    truth = np.zeros((n, n), bool)
+    for _ in range(nsrc):
+        y, x = rng.uniform(20, n - 20, 2)
+        s = rng.uniform(1.5, 6)
+        a = rng.uniform(3, 40) * sigma
+        r2 = (yy - y) ** 2 + (xx - x) ** 2
+        img += a * np.exp(-r2 / (2 * s * s))
+        truth |= r2 < (2 * s) ** 2
+    return img.astype(np.float32), truth
+
+
+@pytest.fixture(scope="module")
+def image():
+    return synthetic_image()
+
+
+@pytest.fixture(scope="module")
+def result(image):
+    return noisechisel(image[0], device="cpu")
+
+
+def test_outputs(result, image):
+    img, truth = image
+    assert result.detections.shape == img.shape
+    assert result.labels.max() == result.num_detections > 0
+    assert result.sky_image().shape == img.shape
+    # every bright source centre is detected
+    assert result.detections.numpy()[truth].mean() > 0.95
+
+
+def test_sky_and_std(result):
+    sky = result.sky_image().numpy()
+    std = result.std_image().numpy()
+    assert abs(np.median(sky) - 100.0) < 0.3
+    assert abs(np.median(std) - 5.0) / 5.0 < 0.05
+
+
+def test_ccl_torch_matches_scipy():
+    rng = np.random.default_rng(0)
+    m = torch.as_tensor(rng.random((300, 280)) > 0.55)
+    for conn in (4, 8):
+        a, na = C._label_torch(m, conn)
+        b, nb = C._label_scipy(m, conn)
+        assert na == nb
+        assert torch.equal(a, b)
+
+
+def test_convolution_is_correlation_with_edge_correction():
+    rng = np.random.default_rng(3)
+    img = torch.as_tensor(rng.normal(0, 1, (60, 70)).astype(np.float32))
+    k = torch.as_tensor(DEFAULT_KERNEL)
+    out = C._convolve(img, k).numpy()
+    x = img.numpy().astype(np.float64)
+    kd = DEFAULT_KERNEL.astype(np.float64)
+    # interior: plain correlation divided by the kernel sum
+    y, xx = 30, 40
+    ref = np.sum(x[y - 5:y + 6, xx - 5:xx + 6] * kd) / kd.sum()
+    assert out[y, xx] == pytest.approx(ref, rel=1e-6)
+    # corner: only the overlapping part of the kernel is used and normalised
+    ref = np.sum(x[:6, :6] * kd[5:, 5:]) / kd[5:, 5:].sum()
+    assert out[0, 0] == pytest.approx(ref, rel=1e-6)
+
+
+def _clip_sigma_reference(values, mult, param, maxnum=50):
+    """Literal Python port of Gnuastro 0.24 ``statistics_clip`` (sigma)."""
+    a = np.sort(np.asarray(values, np.float32))
+    param = float(np.float32(param))
+    bytol = param < 1
+    maxnum = maxnum if bytol else int(param)
+    start, size, num, oldspread = 0, a.size, 0, math.nan
+    while num < maxnum and size:
+        cur = a[start:start + size]
+        n = cur.size
+        center = float(cur[n // 2] if n % 2 else np.float32((cur[n // 2] + cur[n // 2 - 1]) / np.float32(2)))
+        s = s2 = 0.0
+        for v in cur.astype(np.float64):
+            s += v
+            s2 += v * v
+        ss = s * s / n
+        spread = 0.0 if n == 1 or ss > s2 else math.sqrt((s2 - ss) / n)
+        mean = s / n
+        if spread == 0 or (bytol and num > 0 and (oldspread - spread) / spread < param):
+            break
+        lo = np.nonzero(cur > center - mult * spread)[0][0]
+        hi = np.nonzero(cur < center + mult * spread)[0][-1]
+        start, size = start + lo, hi - lo + 1
+        oldspread = spread
+        num += 1
+    if size == 0 or (bytol and num == maxnum):
+        return math.nan, math.nan, math.nan
+    return center, mean, spread
+
+
+def test_sigma_clip_matches_reference():
+    rng = np.random.default_rng(5)
+    rows = []
+    for i in range(20):
+        v = rng.normal(10, 2, 300 + 10 * i)
+        v[:5] += 50                                   # outliers
+        rows.append(v.astype(np.float32))
+    P = max(r.size for r in rows)
+    x = torch.full((len(rows), P), float("nan"))
+    for i, r in enumerate(rows):
+        x[i, :r.size] = torch.as_tensor(r)
+    xs, n = C._sort_rows(x)
+    med, mean, std = C._sigma_clip_rows(xs, n, 3.0, 0.2)
+    for i, r in enumerate(rows):
+        rm, rmean, rstd = _clip_sigma_reference(r, 3.0, 0.2)
+        assert float(med[i]) == pytest.approx(rm, rel=1e-7)
+        assert float(mean[i]) == pytest.approx(rmean, rel=1e-12)
+        assert float(std[i]) == pytest.approx(rstd, rel=1e-12)
+
+
+def _gnuastro_queue_order(ny, nx, y0, x0, n):
+    """Literal emulation of Gnuastro's sorted linked-list neighbour queue."""
+    checked = np.zeros((ny, nx), bool)
+    Q, out = [(0.0, y0, x0)], []
+    while Q and len(out) < n:
+        _, y, x = Q.pop()
+        out.append((y - y0, x - x0))
+        for yy, xx in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if 0 <= yy < ny and 0 <= xx < nx and not checked[yy, xx]:
+                d = np.float32(math.sqrt((yy - y0) ** 2 + (xx - x0) ** 2))
+                i = 0
+                while i < len(Q) and not d >= Q[i][0]:
+                    i += 1
+                Q.insert(i, (d, yy, xx))
+                checked[yy, xx] = True
+    return out
+
+
+@pytest.mark.parametrize("pos", [(20, 20), (0, 0), (2, 39), (39, 5)])
+def test_neighbour_order(pos):
+    ny = nx = 40
+    ref = _gnuastro_queue_order(ny, nx, *pos, 150)
+    order = C._gnuastro_order(12, "radial")
+    mine = [(int(a), int(b)) for a, b in order
+            if 0 <= pos[0] + a < ny and 0 <= pos[1] + b < nx][:150]
+    # compare only within the complete disc of radius 12
+    k = sum(1 for a, b in ref if math.hypot(a, b) <= 12)
+    # Gnuastro re-queues the centre after the first neighbour it pops (which
+    # depends on the edges): only the first three positions may be permuted.
+    assert sorted(mine[:3]) == sorted(ref[:3])
+    assert mine[3:k] == ref[3:k]
+
+
+def test_params_validation():
+    with pytest.raises(TypeError):
+        NoiseChisel(device="cpu", not_an_option=1)
+    with pytest.raises(ValueError):
+        NoiseChisel(device="cpu", erodengb=6)
+
+
+@pytest.mark.skipif(shutil.which("astnoisechisel") is None, reason="Gnuastro not installed")
+def test_identical_to_gnuastro(tmp_path, image):
+    fits = pytest.importorskip("astropy.io.fits")
+    img = image[0]
+    inp = tmp_path / "in.fits"
+    out = tmp_path / "out.fits"
+    fits.writeto(inp, img)
+    subprocess.run(["astnoisechisel", str(inp), "-h0", "-o", str(out), "--quiet"], check=True)
+    with fits.open(out) as hl:
+        det = hl["DETECTIONS"].data.astype(bool)
+        sky = hl["SKY"].data
+        std = hl["SKY_STD"].data
+    res = noisechisel(img, device="cpu")
+    assert np.array_equal(res.detections.numpy(), det)
+    assert np.array_equal(res.sky_image().numpy(), sky)
+    assert np.array_equal(res.std_image().numpy(), std)
+
+
+def test_fits_roundtrip(tmp_path, image):
+    fits = pytest.importorskip("astropy.io.fits")
+    from noisechisel_torch import run_fits
+    inp = tmp_path / "in.fits"
+    out = tmp_path / "out.fits"
+    fits.writeto(inp, image[0])
+    res = run_fits(str(inp), str(out), device="cpu")
+    with fits.open(out) as hl:
+        assert [h.name for h in hl] == ["NOISECHISEL-CONFIG", "INPUT-NO-SKY", "DETECTIONS",
+                                        "SKY", "SKY_STD"]
+        assert hl["DETECTIONS"].data.sum() == int(res.detections.sum())
