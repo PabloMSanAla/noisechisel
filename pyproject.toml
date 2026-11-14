@@ -25,6 +25,7 @@ Homepage = "https://github.com/PabloMSanAla/noisechisel"
 
 [project.optional-dependencies]
 fits = ["astropy"]
+cuda = ["cupy-cuda12x"]
 test = ["pytest", "astropy"]
 
 [project.scripts]

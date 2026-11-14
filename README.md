@@ -18,6 +18,7 @@ pip install "noisechisel-torch[fits] @ git+https://github.com/PabloMSanAla/noise
 # or from a clone:
 pip install .                 # core: numpy, scipy, torch
 pip install ".[fits]"         # + astropy for FITS I/O and the CLI
+pip install ".[fits,cuda]"    # + CuPy (CUDA 12) for fast GPU labelling
 pip install -e ".[test]"      # development (pytest, astropy)
 ```
 
@@ -101,9 +102,11 @@ is ≈ 0.004σ and tile ranks are very sensitive):
 * 2D, single channel only; NaN pixels are never detected (no
   `--blankasforeground`); no check images.
 * Apple MPS has no float64, so `device="mps"` falls back to the CPU.
-* Connected components: `ccl="scipy"` (CPU) or `ccl="torch"` (iterative label
-  propagation, used on CUDA); `"auto"` picks per device.  `ccl="torch"` gives
-  identical labels but is very slow on CPU (~260 s for 4088²).
+* Connected components: `ccl="cupy"` (CUDA, `cupyx.scipy.ndimage.label`,
+  install with `pip install "noisechisel-torch[cuda]"`), `ccl="torch"`
+  (iterative label propagation, any device, slow) or `ccl="scipy"` (CPU).
+  `"auto"` uses cupy on CUDA when installed, else torch; scipy on CPU.  All
+  produce identical labels.
 * CUDA was not available for testing.  On CUDA, `cumsum` is a parallel scan,
   so Sky STD values may differ from Gnuastro in the last float32 bit.
 

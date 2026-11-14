@@ -36,10 +36,11 @@ Convolution, tile statistics (sorting / quantiles / sigma clipping), neighbour
 interpolation, thresholding, erosion / dilation / opening, hole filling, S/N
 measurement and growth are all PyTorch tensor operations (so they run on GPU
 when ``device="cuda"``).  Connected-component labelling has no efficient
-primitive in PyTorch; two back-ends are provided: ``ccl="torch"`` (iterative
-min-label propagation with pointer jumping, GPU friendly) and ``ccl="scipy"``
-(CPU, exact, fast for CPU runs).  ``ccl="auto"`` picks torch on CUDA and scipy
-on CPU.
+primitive in PyTorch; three back-ends are provided: ``ccl="cupy"`` (CUDA,
+``cupyx.scipy.ndimage.label``, zero-copy through DLPack), ``ccl="torch"``
+(iterative min-label propagation with pointer jumping, any device) and
+``ccl="scipy"`` (CPU).  ``ccl="auto"`` picks cupy on CUDA when it is installed
+(else torch) and scipy on CPU.  All give identical labels (raster order).
 
 Fidelity: the arithmetic follows Gnuastro 0.24 closely enough to reproduce
 its output bit for bit on real data (float32 products accumulated in double
@@ -724,6 +725,42 @@ def _label_scipy(mask: torch.Tensor, conn: int):
     return torch.from_numpy(lab.astype(np.int32, copy=False)).to(mask.device), int(n)
 
 
+def _raster_relabel(lab: torch.Tensor, n: int) -> torch.Tensor:
+    """Renumber labels 1..n in raster order of each component's first pixel
+    (the Gnuastro / scipy convention)."""
+    if n == 0:
+        return lab
+    flat = lab.reshape(-1).long()
+    N = flat.numel()
+    first = torch.full((n + 1,), N, dtype=torch.long, device=lab.device)
+    first.scatter_reduce_(0, flat, torch.arange(N, device=lab.device), reduce="amin")
+    order = torch.argsort(first[1:])
+    new = torch.zeros(n + 1, dtype=torch.int32, device=lab.device)
+    new[1 + order] = torch.arange(1, n + 1, dtype=torch.int32, device=lab.device)
+    return new[flat].view(lab.shape)
+
+
+def _cupy_available() -> bool:
+    try:
+        import cupy                        # noqa: F401
+        from cupyx.scipy import ndimage    # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+def _label_cupy(mask: torch.Tensor, conn: int):
+    """``cupyx.scipy.ndimage.label`` on a CUDA tensor (no host copies)."""
+    import cupy
+    from cupyx.scipy import ndimage
+    st = cupy.asarray(ndimage.generate_binary_structure(2, 1 if conn == 4 else 2))
+    with cupy.cuda.Device(mask.device.index or 0):
+        m = cupy.from_dlpack(mask.contiguous().to(torch.uint8))
+        lab, n = ndimage.label(m, structure=st, output=cupy.int32)
+        lab = torch.from_dlpack(lab)
+    return _raster_relabel(lab, int(n)), int(n)
+
+
 def _label_torch(mask: torch.Tensor, conn: int, max_iter: int = 100000):
     """Connected components by min-label propagation + pointer jumping.
     Labels are consecutive in raster order of each component's first pixel
@@ -900,8 +937,9 @@ class NoiseChisel:
         FWHM=2 px).  ``None`` disables convolution.
     widekernel : None | array-like
         Optional wider kernel (``--widekernel``) used to pick sky-like tiles.
-    ccl : "auto" | "torch" | "scipy"
-        Connected-component back-end.
+    ccl : "auto" | "cupy" | "torch" | "scipy"
+        Connected-component back-end ("auto": cupy on CUDA if installed,
+        else torch; scipy on CPU).
     verbose : bool
         Print step timings.
     chunk_elems : int
@@ -927,9 +965,17 @@ class NoiseChisel:
             warnings.warn("MPS has no float64 support: running NoiseChisel on the CPU",
                           RuntimeWarning, stacklevel=2)
             self.device = torch.device("cpu")
-        if ccl not in ("auto", "torch", "scipy"):
-            raise ValueError("ccl must be 'auto', 'torch' or 'scipy'")
-        self.ccl = ("torch" if self.device.type == "cuda" else "scipy") if ccl == "auto" else ccl
+        if ccl not in ("auto", "cupy", "torch", "scipy"):
+            raise ValueError("ccl must be 'auto', 'cupy', 'torch' or 'scipy'")
+        if ccl == "auto":
+            if self.device.type == "cuda":
+                ccl = "cupy" if _cupy_available() else "torch"
+            else:
+                ccl = "scipy"
+        if ccl == "cupy" and (self.device.type != "cuda" or not _cupy_available()):
+            raise ValueError("ccl='cupy' needs device='cuda' and CuPy "
+                             "(pip install 'noisechisel-torch[cuda]')")
+        self.ccl = ccl
         self.verbose = verbose
         self.chunk_elems = int(chunk_elems)
         self.kernel = self._as_kernel(kernel)
@@ -980,6 +1026,8 @@ class NoiseChisel:
         _check_conn(conn)
         if self.ccl == "scipy":
             return _label_scipy(mask, conn)
+        if self.ccl == "cupy":
+            return _label_cupy(mask, conn)
         return _label_torch(mask, conn)
 
     # --------------------------------------------------- quantile threshold

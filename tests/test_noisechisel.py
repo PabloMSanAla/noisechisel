@@ -197,3 +197,36 @@ def test_fits_roundtrip(tmp_path, image):
         assert [h.name for h in hl] == ["NOISECHISEL-CONFIG", "INPUT-NO-SKY", "DETECTIONS",
                                         "SKY", "SKY_STD"]
         assert hl["DETECTIONS"].data.sum() == int(res.detections.sum())
+
+
+def test_raster_relabel():
+    rng = np.random.default_rng(0)
+    m = torch.as_tensor(rng.random((200, 150)) > 0.5)
+    ref, n = C._label_scipy(m, 8)
+    perm = torch.cat([torch.zeros(1, dtype=torch.int32), torch.randperm(n).int() + 1])
+    assert torch.equal(C._raster_relabel(perm[ref.long()], n), ref)
+
+
+cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="no CUDA device")
+
+
+@cuda
+@pytest.mark.skipif(not C._cupy_available(), reason="CuPy not installed")
+def test_ccl_cupy_matches_scipy():
+    rng = np.random.default_rng(0)
+    m = torch.as_tensor(rng.random((500, 400)) > 0.55)
+    for conn in (4, 8):
+        a, na = C._label_cupy(m.cuda(), conn)
+        b, nb = C._label_scipy(m, conn)
+        assert na == nb
+        assert torch.equal(a.cpu(), b)
+
+
+@cuda
+def test_cuda_matches_cpu(image, result):
+    for ccl in ["torch"] + (["cupy"] if C._cupy_available() else []):
+        res = noisechisel(image[0], device="cuda", ccl=ccl)
+        assert torch.equal(res.detections.cpu(), result.detections)
+        assert torch.equal(res.labels.cpu(), result.labels)
+        assert torch.equal(res.sky.cpu(), result.sky)
+        assert torch.equal(res.std.cpu(), result.std)
