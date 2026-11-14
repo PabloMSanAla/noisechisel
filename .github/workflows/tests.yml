@@ -31,6 +31,8 @@ jobs:
 
   gnuastro:
     # Bit-exact comparison with astnoisechisel (Gnuastro is not packaged for Windows).
+    # libgnuastro (conda-forge, linux-64) links libopenblas directly, so the
+    # OpenBLAS BLAS variant is pinned (pytorch would otherwise pull MKL).
     name: vs Gnuastro / ${{ matrix.os }} / py${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -55,6 +57,7 @@ jobs:
             astropy
             pytest
             pip
+            libblas=*=*openblas
           condarc: |
             channels:
               - conda-forge
