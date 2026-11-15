@@ -52,16 +52,6 @@ def test_sky_and_std(result):
     assert abs(np.median(std) - 5.0) / 5.0 < 0.05
 
 
-def test_ccl_torch_matches_scipy():
-    rng = np.random.default_rng(0)
-    m = torch.as_tensor(rng.random((300, 280)) > 0.55)
-    for conn in (4, 8):
-        a, na = C._label_torch(m, conn)
-        b, nb = C._label_scipy(m, conn)
-        assert na == nb
-        assert torch.equal(a, b)
-
-
 def test_convolution_is_correlation_with_edge_correction():
     rng = np.random.default_rng(3)
     img = torch.as_tensor(rng.normal(0, 1, (60, 70)).astype(np.float32))
@@ -224,7 +214,7 @@ def test_ccl_cupy_matches_scipy():
 
 @cuda
 def test_cuda_matches_cpu(image, result):
-    for ccl in ["torch"] + (["cupy"] if C._cupy_available() else []):
+    for ccl in ["scipy"] + (["cupy"] if C._cupy_available() else []):
         res = noisechisel(image[0], device="cuda", ccl=ccl)
         assert torch.equal(res.detections.cpu(), result.detections)
         assert torch.equal(res.labels.cpu(), result.labels)

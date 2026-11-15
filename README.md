@@ -63,7 +63,7 @@ noisechisel-torch image.fits -h 0 -o image_detected.fits --device cuda --tilesiz
 ## Validation against Gnuastro
 
 GPU vs Gnuastro on Google Colab:
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PabloMSanAla/noisechisel/blob/cupy-ccl/notebooks/colab_gpu_benchmark.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PabloMSanAla/noisechisel/blob/main/notebooks/colab_gpu_benchmark.ipynb)
 (`notebooks/colab_gpu_benchmark.ipynb`: checks the CUDA/CuPy install, installs
 Gnuastro 0.24, runs the tests and benchmarks Gnuastro vs torch CPU vs torch CUDA).
 
@@ -109,13 +109,13 @@ is ≈ 0.004σ and tile ranks are very sensitive):
 * 2D, single channel only; NaN pixels are never detected (no
   `--blankasforeground`); no check images.
 * Apple MPS has no float64, so `device="mps"` falls back to the CPU.
-* Connected components: `ccl="cupy"` (CUDA, `cupyx.scipy.ndimage.label`,
-  install with `pip install "noisechisel-torch[cuda12]"` or `[cuda13]`), `ccl="torch"`
-  (iterative label propagation, any device, slow) or `ccl="scipy"` (CPU).
-  `"auto"` uses cupy on CUDA when installed, else torch; scipy on CPU.  All
-  produce identical labels.
-* CUDA was not available for testing.  On CUDA, `cumsum` is a parallel scan,
-  so Sky STD values may differ from Gnuastro in the last float32 bit.
+* Connected components (no PyTorch/torchvision primitive exists):
+  `ccl="cupy"` (CUDA, `cupyx.scipy.ndimage.label`, install with
+  `pip install "noisechisel-torch[cuda12]"` or `[cuda13]`) or `ccl="scipy"`
+  (CPU; with CUDA tensors the mask goes through host memory).  `"auto"` uses
+  cupy on CUDA when installed, scipy otherwise.  Both produce identical labels.
+* GPU: on a Colab T4 a 4088² Roman frame takes 0.66 s with `device="cuda"`
+  and CuPy, bit-identical to Gnuastro (which takes 26 s on Colab's 2 vCPUs).
 
 ## License
 

@@ -36,11 +36,11 @@ Convolution, tile statistics (sorting / quantiles / sigma clipping), neighbour
 interpolation, thresholding, erosion / dilation / opening, hole filling, S/N
 measurement and growth are all PyTorch tensor operations (so they run on GPU
 when ``device="cuda"``).  Connected-component labelling has no efficient
-primitive in PyTorch; three back-ends are provided: ``ccl="cupy"`` (CUDA,
-``cupyx.scipy.ndimage.label``, zero-copy through DLPack), ``ccl="torch"``
-(iterative min-label propagation with pointer jumping, any device) and
-``ccl="scipy"`` (CPU).  ``ccl="auto"`` picks cupy on CUDA when it is installed
-(else torch) and scipy on CPU.  All give identical labels (raster order).
+primitive in PyTorch (nor in torchvision); two back-ends are provided:
+``ccl="cupy"`` (CUDA, ``cupyx.scipy.ndimage.label``, zero-copy through DLPack)
+and ``ccl="scipy"`` (CPU; on CUDA the mask is copied to the host and back).
+``ccl="auto"`` picks cupy on CUDA when it is installed, scipy otherwise.  Both
+give identical labels (raster order).
 
 Fidelity: the arithmetic follows Gnuastro 0.24 closely enough to reproduce
 its output bit for bit on real data (float32 products accumulated in double
@@ -761,55 +761,6 @@ def _label_cupy(mask: torch.Tensor, conn: int):
     return _raster_relabel(lab, int(n)), int(n)
 
 
-def _label_torch(mask: torch.Tensor, conn: int, max_iter: int = 100000):
-    """Connected components by min-label propagation + pointer jumping.
-    Labels are consecutive in raster order of each component's first pixel
-    (same convention as Gnuastro / scipy)."""
-    H, W = mask.shape
-    N = H * W
-    dt = torch.int32 if N < 2 ** 31 - 2 else torch.int64
-    big = N + 1
-    flat_m = mask.reshape(-1)
-    ids = torch.arange(1, N + 1, dtype=dt, device=mask.device)
-    lab = torch.where(flat_m, ids, torch.zeros((), dtype=dt, device=mask.device))
-    bigt = torch.full((), big, dtype=dt, device=mask.device)
-
-    def nbr_min(l2):
-        m = l2.clone()
-        if conn == 4:
-            m[1:] = torch.minimum(m[1:], l2[:-1])
-            m[:-1] = torch.minimum(m[:-1], l2[1:])
-            m[:, 1:] = torch.minimum(m[:, 1:], l2[:, :-1])
-            m[:, :-1] = torch.minimum(m[:, :-1], l2[:, 1:])
-            return m
-        h = m.clone()
-        h[:, 1:] = torch.minimum(h[:, 1:], m[:, :-1])
-        h[:, :-1] = torch.minimum(h[:, :-1], m[:, 1:])
-        v = h.clone()
-        v[1:] = torch.minimum(v[1:], h[:-1])
-        v[:-1] = torch.minimum(v[:-1], h[1:])
-        return v
-
-    for _ in range(max_iter):
-        l2 = torch.where(flat_m, lab, bigt).view(H, W)
-        new = torch.where(mask, torch.minimum(lab.view(H, W), nbr_min(l2)),
-                          torch.zeros((), dtype=dt, device=mask.device)).reshape(-1)
-        while True:                                  # pointer jumping
-            nz = new > 0
-            jump = torch.where(nz, new[(new - 1).clamp(min=0).long()], new)
-            if torch.equal(jump, new):
-                break
-            new = jump
-        if torch.equal(new, lab):
-            break
-        lab = new
-    root = flat_m & (lab == ids)
-    rid = torch.cumsum(root, 0).to(torch.int32)
-    out = torch.where(flat_m, rid[(lab - 1).clamp(min=0).long()],
-                      torch.zeros((), dtype=torch.int32, device=mask.device))
-    return out.view(H, W), int(rid[-1]) if N else 0
-
-
 # ==========================================================================
 # Tiled canvas: run per-tile binary ops with ONE global tensor op.
 # Tiles are laid out with 1-pixel "gap" lines between them; ops restore the
@@ -937,9 +888,9 @@ class NoiseChisel:
         FWHM=2 px).  ``None`` disables convolution.
     widekernel : None | array-like
         Optional wider kernel (``--widekernel``) used to pick sky-like tiles.
-    ccl : "auto" | "cupy" | "torch" | "scipy"
+    ccl : "auto" | "cupy" | "scipy"
         Connected-component back-end ("auto": cupy on CUDA if installed,
-        else torch; scipy on CPU).
+        scipy otherwise).
     verbose : bool
         Print step timings.
     chunk_elems : int
@@ -965,13 +916,10 @@ class NoiseChisel:
             warnings.warn("MPS has no float64 support: running NoiseChisel on the CPU",
                           RuntimeWarning, stacklevel=2)
             self.device = torch.device("cpu")
-        if ccl not in ("auto", "cupy", "torch", "scipy"):
-            raise ValueError("ccl must be 'auto', 'cupy', 'torch' or 'scipy'")
+        if ccl not in ("auto", "cupy", "scipy"):
+            raise ValueError("ccl must be 'auto', 'cupy' or 'scipy'")
         if ccl == "auto":
-            if self.device.type == "cuda":
-                ccl = "cupy" if _cupy_available() else "torch"
-            else:
-                ccl = "scipy"
+            ccl = "cupy" if self.device.type == "cuda" and _cupy_available() else "scipy"
         if ccl == "cupy" and (self.device.type != "cuda" or not _cupy_available()):
             raise ValueError("ccl='cupy' needs device='cuda' and CuPy "
                              "(pip install 'noisechisel-torch[cuda12]' or '[cuda13]')")
@@ -1024,11 +972,9 @@ class NoiseChisel:
 
     def _label(self, mask, conn):
         _check_conn(conn)
-        if self.ccl == "scipy":
-            return _label_scipy(mask, conn)
         if self.ccl == "cupy":
             return _label_cupy(mask, conn)
-        return _label_torch(mask, conn)
+        return _label_scipy(mask, conn)
 
     # --------------------------------------------------- quantile threshold
     def _quantile_thresholds(self, grid, conv, wconv):

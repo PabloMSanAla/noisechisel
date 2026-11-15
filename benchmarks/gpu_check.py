@@ -4,7 +4,6 @@ Gnuastro) and time it.
 
     python benchmarks/gpu_check.py                 # synthetic Roman-like 4088^2 image
     python benchmarks/gpu_check.py img.fits ...    # your own images (HDU 0)
-    python benchmarks/gpu_check.py --torch-ccl     # also time ccl="torch" on the GPU
 """
 import argparse
 import time
@@ -57,7 +56,6 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("images", nargs="*")
     ap.add_argument("--repeat", type=int, default=3)
-    ap.add_argument("--torch-ccl", action="store_true")
     a = ap.parse_args()
     assert torch.cuda.is_available(), "no CUDA device"
     print(f"noisechisel-torch {nct.__version__}, torch {torch.__version__}, "
@@ -72,8 +70,8 @@ def main():
     cfgs = [("cpu", "scipy")]
     if _cupy_available():
         cfgs.append(("cuda", "cupy"))
-    if a.torch_ccl or not _cupy_available():
-        cfgs.append(("cuda", "torch"))
+    else:
+        cfgs.append(("cuda", "scipy"))
     for name, img in images:
         print(f"\n== {name} {img.shape}")
         ref = None
