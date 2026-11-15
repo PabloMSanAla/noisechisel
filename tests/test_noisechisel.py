@@ -189,6 +189,34 @@ def test_fits_roundtrip(tmp_path, image):
         assert hl["DETECTIONS"].data.sum() == int(res.detections.sum())
 
 
+def test_fits_oneelempertile(tmp_path, image):
+    fits = pytest.importorskip("astropy.io.fits")
+    from noisechisel_torch import run_fits
+    inp = tmp_path / "in.fits"
+    out = tmp_path / "out.fits"
+    fits.writeto(inp, image[0])
+    res = run_fits(str(inp), str(out), device="cpu", oneelempertile=True)
+    with fits.open(out) as hl:
+        assert hl["SKY"].data.shape == tuple(res.sky.shape)
+        assert np.array_equal(hl["SKY_STD"].data, res.std.numpy(), equal_nan=True)
+        assert hl["DETECTIONS"].data.shape == image[0].shape
+
+
+def test_write_failure_removes_partial_file(tmp_path, image, monkeypatch):
+    fits = pytest.importorskip("astropy.io.fits")
+    from noisechisel_torch import noisechisel, write_fits
+    res = noisechisel(image[0], device="cpu")
+    out = tmp_path / "out.fits"
+
+    def full_disk(self, path, overwrite=False):
+        open(path, "wb").write(b"\0" * 2880)
+        raise OSError("16711744 requested and 0 written")
+    monkeypatch.setattr(fits.HDUList, "writeto", full_disk)
+    with pytest.raises(OSError, match="MB needed"):
+        write_fits(res, str(out))
+    assert not out.exists()
+
+
 def test_raster_relabel():
     rng = np.random.default_rng(0)
     m = torch.as_tensor(rng.random((200, 150)) > 0.5)

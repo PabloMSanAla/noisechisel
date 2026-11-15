@@ -42,7 +42,8 @@ noisechisel-torch image.fits -h 0 -o image_detected.fits --device cuda
 
 Options keep Gnuastro's names and defaults (`tilesize`, `qthresh`, `erode`,
 `snquant`, ...; see `NoiseChiselParams`). The output file has the same HDUs as
-`astnoisechisel`.
+`astnoisechisel`. Add `--oneelempertile` to write Sky/STD with one value per
+tile, which cuts a 4088² output from ~200 MB to ~85 MB.
 
 ## Validation
 

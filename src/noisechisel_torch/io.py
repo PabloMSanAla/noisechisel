@@ -5,6 +5,7 @@ Requires ``astropy`` (``pip install noisechisel-torch[fits]``).
 """
 from __future__ import annotations
 
+import os
 from dataclasses import asdict
 from typing import Optional, Union
 
@@ -44,11 +45,13 @@ def _wcs_header(header):
 
 
 def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[dict] = None,
-               overwrite: bool = True, rawoutput: bool = False, label: bool = False):
+               overwrite: bool = True, rawoutput: bool = False, label: bool = False,
+               oneelempertile: bool = False):
     """Write the result like ``astnoisechisel``: HDUs ``INPUT-NO-SKY``,
     ``DETECTIONS`` (uint8, or int32 labels with ``label=True``), ``SKY`` and
     ``SKY_STD``.  With ``rawoutput=True`` only DETECTIONS/SKY/SKY_STD are
-    written (Sky/STD per tile are still expanded to full resolution)."""
+    written.  With ``oneelempertile=True`` SKY/SKY_STD hold one value per
+    tile instead of being expanded to full resolution (much smaller file)."""
     fits = _fits()
     wh = _wcs_header(header)
 
@@ -68,18 +71,24 @@ def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[
             v = "none"
         phdu.header["HIERARCH " + k.upper()] = v
     hdus = [phdu]
-    sky = res.sky_image().cpu().numpy().astype(np.float32)
-    std = res.std_image().cpu().numpy().astype(np.float32)
+    if oneelempertile:
+        sky = res.sky.cpu().numpy().astype(np.float32)
+        std = res.std.cpu().numpy().astype(np.float32)
+    else:
+        sky = res.sky_image().cpu().numpy().astype(np.float32)
+        std = res.std_image().cpu().numpy().astype(np.float32)
     blank = np.isnan(res.input.cpu().numpy()) if res.input is not None else None
     if not rawoutput and res.input is not None:
-        hdus.append(img((res.input.cpu().numpy() - sky).astype(np.float32), "INPUT-NO-SKY"))
+        hdus.append(img((res.input - res.sky_image()).cpu().numpy().astype(np.float32),
+                        "INPUT-NO-SKY"))
     det = (res.labels.cpu().numpy().astype(np.int32) if label
            else res.detections.cpu().numpy().astype(np.uint8))
     extra = {"DETSN": res.det_sn_threshold, "NUMLABS": res.num_detections}
     if blank is not None and blank.any():
         # Blank input pixels are blank in all outputs (as astnoisechisel).
-        sky[blank] = np.nan
-        std[blank] = np.nan
+        if not oneelempertile:
+            sky[blank] = np.nan
+            std[blank] = np.nan
         if label:
             det[blank] = -2147483648
             extra["BLANK"] = -2147483648
@@ -87,14 +96,24 @@ def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[
             det[blank] = 255
             extra["BLANK"] = 255
     hdus.append(img(det, "DETECTIONS", extra))
+    if oneelempertile:
+        wh = None   # the input WCS does not apply to the tile grid
     hdus.append(img(sky, "SKY"))
     hdus.append(img(std, "SKY_STD", {"MEDSTD": res.med_std, "MINSTD": res.min_std,
                                      "MAXSTD": res.max_std}))
-    fits.HDUList(hdus).writeto(path, overwrite=overwrite)
+    try:
+        fits.HDUList(hdus).writeto(path, overwrite=overwrite)
+    except OSError as e:
+        # Don't leave a truncated file behind (e.g. when the disk is full).
+        if os.path.exists(path):
+            os.remove(path)
+        need = sum(h.data.nbytes for h in hdus if h.data is not None) / 2**20
+        raise OSError(f"could not write {path} ({need:.0f} MB needed): {e}") from e
 
 
 def run_fits(input_path: str, output_path: Optional[str] = None, hdu: Union[int, str] = 0,
-             device=None, label: bool = False, rawoutput: bool = False, **kwargs):
+             device=None, label: bool = False, rawoutput: bool = False,
+             oneelempertile: bool = False, **kwargs):
     """Run NoiseChisel on a FITS image; optionally write the output file.
     Extra keywords go to :class:`~noisechisel_torch.NoiseChisel`."""
     data, header = read_image(input_path, hdu)
@@ -102,5 +121,5 @@ def run_fits(input_path: str, output_path: Optional[str] = None, hdu: Union[int,
     res = nc(data)
     if output_path:
         write_fits(res, output_path, header=header, config=asdict(nc.p),
-                   rawoutput=rawoutput, label=label)
+                   rawoutput=rawoutput, label=label, oneelempertile=oneelempertile)
     return res

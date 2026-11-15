@@ -42,6 +42,8 @@ def build_parser():
     ap.add_argument("--ccl", default="auto", choices=["auto", "cupy", "scipy"])
     ap.add_argument("--label", action="store_true", help="write labels instead of a 0/1 mask")
     ap.add_argument("--rawoutput", action="store_true", help="skip the INPUT-NO-SKY HDU")
+    ap.add_argument("--oneelempertile", action="store_true",
+                    help="write SKY/SKY_STD with one value per tile (smaller output)")
     ap.add_argument("-q", "--quiet", action="store_true")
     hints = get_type_hints(NoiseChiselParams)
     for f in fields(NoiseChiselParams):
@@ -65,8 +67,13 @@ def main(argv=None):
     hdu = int(a.hdu) if a.hdu.lstrip("-").isdigit() else a.hdu
     out = a.output or os.path.splitext(os.path.basename(a.input))[0] + "_detected.fits"
     t0 = time.perf_counter()
-    res = run_fits(a.input, out, hdu=hdu, device=a.device, ccl=a.ccl, label=a.label,
-                   rawoutput=a.rawoutput, verbose=not a.quiet, **params)
+    try:
+        res = run_fits(a.input, out, hdu=hdu, device=a.device, ccl=a.ccl, label=a.label,
+                       rawoutput=a.rawoutput, oneelempertile=a.oneelempertile,
+                       verbose=not a.quiet, **params)
+    except OSError as e:
+        print(f"noisechisel-torch: error: {e}", file=sys.stderr)
+        return 1
     if not a.quiet:
         print(f"{res.num_detections} detections, S/N thresh {res.det_sn_threshold:.3f}, "
               f"median std {res.med_std:.6g}  -> {out}  [{time.perf_counter() - t0:.2f}s]")
