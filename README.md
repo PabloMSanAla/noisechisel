@@ -9,18 +9,21 @@ A PyTorch port of [Gnuastro](https://www.gnu.org/software/gnuastro/)'s
 Sky STD. It runs on CPU or CUDA, and its detection mask, Sky and Sky STD are
 **bit-identical** to `astnoisechisel` 0.24 with default options.
 
-![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/e443b80d24baf68303d4649e5ebe3ccb41da189d/docs/images/comparison.png)
+![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/comparison.png)
 
-![Run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/e443b80d24baf68303d4649e5ebe3ccb41da189d/docs/images/performance.png)
+![CPU vs GPU run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/performance.png)
 
 ### Scaling with CPU threads
 
-![Thread scaling](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/b9a37c442fd206be9007d6060e61a725dd3fb5be/docs/images/scaling.png)
+![Thread scaling](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/scaling.png)
 
-Both programs stop gaining beyond about 6–10 threads (2.3–2.5× over one
-thread), so most of the run is serial or memory-bound. noisechisel-torch is
-faster at every thread count. Data: `benchmarks/results/scaling_m3max.csv`,
-made with `benchmarks/scaling.py`.
+Both programs gain little beyond about 6–10 threads (at most 2.4–2.5× over
+one thread), and noisechisel-torch is faster at every thread count. The CPU
+times in the bar chart above are taken from this test at 10 threads.
+
+All benchmarks use simulated Roman WFI frames (4088×4088). CPU: Apple M3 Max,
+median of 4 runs including FITS read and write. GPU: Colab T4 with CuPy.
+Data: `benchmarks/results/scaling_m3max.csv`, made with `benchmarks/scaling.py`.
 
 ## Install
 
@@ -57,11 +60,11 @@ tile, which cuts a 4088² output from ~200 MB to ~85 MB.
 
 ## Validation
 
-* Identical masks, Sky and STD on 18 Roman WFI detectors, on the frames shown
+* Identical masks, Sky and STD on 18 simulated Roman WFI detectors, on the frame shown
   above and on images with NaN regions.
 * `benchmarks/compare_gnuastro.py` runs both programs on your images and
   reports pixel differences and timings. `benchmarks/readme_figures.py` makes
-  the figures above, and `benchmarks/scaling.py` the thread-scaling test.
+  the output comparison figure and `benchmarks/scaling.py` the timing figures.
 * CI runs the tests on Linux, macOS and Windows (Python 3.11/3.12) and
   compares against Gnuastro 0.24 on Linux and macOS.
 
