@@ -40,14 +40,14 @@ def test_outputs(result, image):
     img, truth = image
     assert result.detections.shape == img.shape
     assert result.labels.max() == result.num_detections > 0
-    assert result.sky_image().shape == img.shape
+    assert result.sky.shape == result.std.shape == img.shape
     # every bright source centre is detected
     assert result.detections.numpy()[truth].mean() > 0.95
 
 
 def test_sky_and_std(result):
-    sky = result.sky_image().numpy()
-    std = result.std_image().numpy()
+    sky = result.sky.numpy()
+    std = result.std.numpy()
     assert abs(np.median(sky) - 100.0) < 0.3
     assert abs(np.median(std) - 5.0) / 5.0 < 0.05
 
@@ -172,8 +172,8 @@ def test_identical_to_gnuastro(tmp_path, image):
         std = hl["SKY_STD"].data
     res = noisechisel(img, device="cpu")
     assert np.array_equal(res.detections.numpy(), det)
-    assert np.array_equal(res.sky_image().numpy(), sky)
-    assert np.array_equal(res.std_image().numpy(), std)
+    assert np.array_equal(res.sky.numpy(), sky, equal_nan=True)
+    assert np.array_equal(res.std.numpy(), std, equal_nan=True)
 
 
 def test_fits_roundtrip(tmp_path, image):
@@ -197,8 +197,8 @@ def test_fits_oneelempertile(tmp_path, image):
     fits.writeto(inp, image[0])
     res = run_fits(str(inp), str(out), device="cpu", oneelempertile=True)
     with fits.open(out) as hl:
-        assert hl["SKY"].data.shape == tuple(res.sky.shape)
-        assert np.array_equal(hl["SKY_STD"].data, res.std.numpy(), equal_nan=True)
+        assert hl["SKY"].data.shape == tuple(res.sky_tiles.shape)
+        assert np.array_equal(hl["SKY_STD"].data, res.std_tiles.numpy(), equal_nan=True)
         assert hl["DETECTIONS"].data.shape == image[0].shape
 
 

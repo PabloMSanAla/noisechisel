@@ -19,8 +19,8 @@ Function interface::
     res = noisechisel(image, device="cuda")          # image: numpy array / tensor
     res.detections      # bool  (H, W)
     res.labels          # int32 (H, W), 0 = sky, 1..N = detections
-    res.sky_image()     # per-pixel sky   (tile values expanded)
-    res.std_image()     # per-pixel sky standard deviation
+    res.sky, res.std    # float32 (H, W) Sky and Sky STD
+    res.info()          # number of detections, S/N threshold, STD range, ...
 
 Class interface (reuse the same configuration on many images)::
 
@@ -164,43 +164,62 @@ class NoiseChiselParams:
 
 @dataclass
 class NoiseChiselResult:
-    """Output of :class:`NoiseChisel`. All tensors live on the run device."""
+    """Output of :class:`NoiseChisel`. All tensors live on the run device.
 
-    detections: torch.Tensor          # bool  (H, W)
-    labels: torch.Tensor              # int32 (H, W), 0 = not detected
+    ``sky`` and ``std`` are full-resolution images (each pixel holds the value
+    of its tile, NaN where the input is blank), like Gnuastro's ``SKY`` and
+    ``SKY_STD`` outputs.  ``info()`` prints a summary."""
+
+    detections: torch.Tensor          # bool    (H, W)
+    labels: torch.Tensor              # int32   (H, W), 0 = not detected
+    sky: torch.Tensor                 # float32 (H, W) Sky
+    std: torch.Tensor                 # float32 (H, W) Sky STD
     num_detections: int
     num_initial_detections: int
     det_sn_threshold: float           # S/N threshold of true pseudo-detections
-    sky: torch.Tensor                 # float32 (ny, nx) final Sky, one per tile
-    std: torch.Tensor                 # float32 (ny, nx) final Sky STD, per tile
-    tile_row_index: torch.Tensor      # (H,) tile row of every image row
-    tile_col_index: torch.Tensor      # (W,) tile column of every image column
-    tile_shape: Tuple[int, int]       # (ny, nx)
     min_std: float
     med_std: float
     max_std: float
-    input: Optional[torch.Tensor] = None   # reference to the input image
+    sky_tiles: torch.Tensor           # float32 (ny, nx) one Sky value per tile
+    std_tiles: torch.Tensor           # float32 (ny, nx) one Sky STD value per tile
+    params: Optional[NoiseChiselParams] = None
 
-    def sky_image(self) -> torch.Tensor:
-        """Sky value for every pixel (tile value of the pixel's tile)."""
-        return self.sky[self.tile_row_index[:, None], self.tile_col_index[None, :]]
+    @property
+    def shape(self) -> Tuple[int, int]:
+        return tuple(self.detections.shape)
 
-    def std_image(self) -> torch.Tensor:
-        return self.std[self.tile_row_index[:, None], self.tile_col_index[None, :]]
+    def meta(self) -> dict:
+        """Scalar results (what ``info()`` prints) as a dict."""
+        sky = self.sky_tiles[torch.isfinite(self.sky_tiles)]
+        return {
+            "shape": self.shape,
+            "device": str(self.detections.device),
+            "tile_grid": tuple(self.sky_tiles.shape),
+            "num_initial_detections": self.num_initial_detections,
+            "num_detections": self.num_detections,
+            "detected_fraction": float(self.detections.float().mean()),
+            "det_sn_threshold": self.det_sn_threshold,
+            "median_sky": float(sky.median()) if sky.numel() else float("nan"),
+            "min_std": self.min_std,
+            "med_std": self.med_std,
+            "max_std": self.max_std,
+        }
 
-    def sky_subtracted(self) -> torch.Tensor:
-        if self.input is None:
-            raise ValueError("input image was not kept")
-        return self.input - self.sky_image()
+    def info(self, params: bool = False) -> None:
+        """Print the scalar results (and the options used with ``params=True``)."""
+        rows = list(self.meta().items())
+        if params and self.params is not None:
+            rows += [(f.name, getattr(self.params, f.name)) for f in fields(self.params)]
+        w = max(len(k) for k, _ in rows)
+        print("NoiseChisel result")
+        for k, v in rows:
+            if isinstance(v, float):
+                v = f"{v:.6g}"
+            print(f"  {k:<{w}}  {v}")
 
     def numpy(self) -> dict:
-        """Convenience: everything as numpy arrays."""
-        out = {}
-        for k in ("detections", "labels", "sky", "std"):
-            out[k] = getattr(self, k).cpu().numpy()
-        out["sky_image"] = self.sky_image().cpu().numpy()
-        out["std_image"] = self.std_image().cpu().numpy()
-        return out
+        """Convenience: the images as numpy arrays."""
+        return {k: getattr(self, k).cpu().numpy() for k in ("detections", "labels", "sky", "std")}
 
 
 # ==========================================================================
@@ -1272,13 +1291,18 @@ class NoiseChisel:
 
         # 7. final sky and std --------------------------------------------
         sky_f, std_f, (mn, md, mx), _ = self._sky_and_std(grid, img, binary, noskytiles)
+        # Tile values -> full-resolution images; blank input pixels stay blank.
+        blank = torch.isnan(img)
+        rows, cols = grid.row_tile[:, None], grid.col_tile[None, :]
+        nan = torch.tensor(float("nan"), device=dev)
+        sky_img = torch.where(blank, nan, sky_f[rows, cols])
+        std_img = torch.where(blank, nan, std_f[rows, cols])
         t = self._log("final sky found", t)
         self._log("done", t_all)
         return NoiseChiselResult(
-            detections=binary, labels=labels.to(torch.int32), num_detections=nfinal,
-            num_initial_detections=ninit, det_sn_threshold=snthr, sky=sky_f, std=std_f,
-            tile_row_index=grid.row_tile, tile_col_index=grid.col_tile,
-            tile_shape=(grid.ny, grid.nx), min_std=mn, med_std=md, max_std=mx, input=img)
+            detections=binary, labels=labels.to(torch.int32), sky=sky_img, std=std_img,
+            num_detections=nfinal, num_initial_detections=ninit, det_sn_threshold=snthr,
+            min_std=mn, med_std=md, max_std=mx, sky_tiles=sky_f, std_tiles=std_f, params=p)
 
 
 def noisechisel(image, device=None, **kwargs) -> NoiseChiselResult:

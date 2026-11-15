@@ -125,8 +125,8 @@ def main():
                 torch.cuda.synchronize()
             times.append(time.perf_counter() - t0)
         det_t = res.detections.cpu().numpy()
-        sky_t = res.sky_image().cpu().numpy()
-        std_t = res.std_image().cpu().numpy()
+        sky_t = res.sky.cpu().numpy()
+        std_t = res.std.cpu().numpy()
 
         row = {"image": name, "t_gnuastro_s": t_gnu, "t_torch_s": min(times),
                "detsn_gnu": detsn_g, "detsn_torch": res.det_sn_threshold,

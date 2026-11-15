@@ -43,7 +43,10 @@ from noisechisel_torch import noisechisel, NoiseChisel
 img = fits.getdata("image.fits", ext=0)
 res = noisechisel(img, device="cuda")   # or device="cpu", numthreads=8
 res.detections                          # bool mask (H, W)
-res.sky_image(), res.std_image()        # per-pixel Sky and Sky STD
+res.labels                              # int32 (H, W), 0 = sky, 1..N detections
+res.sky, res.std                        # float32 (H, W) Sky and Sky STD (NaN where input is blank)
+res.info()                              # detections, S/N threshold, Sky/STD summary
+res.meta()                              # the same values as a dict
 
 nc = NoiseChisel(device="cuda", tilesize=(64, 64), qthresh=0.3)   # reuse on many images
 res = nc(img)
@@ -56,7 +59,8 @@ noisechisel-torch image.fits -h 0 -o image_detected.fits --device cpu -N 8   # 8
 
 Options keep Gnuastro's names and defaults (`tilesize`, `qthresh`, `erode`,
 `snquant`, ...; see `NoiseChiselParams`). The output file has the same HDUs as
-`astnoisechisel`. Add `--oneelempertile` to write Sky/STD with one value per
+`astnoisechisel`, including the sky-subtracted `INPUT-NO-SKY` (only in the
+file; subtract `res.sky` yourself in Python). Add `--oneelempertile` to write Sky/STD with one value per
 tile, which cuts a 4088² output from ~200 MB to ~85 MB.
 
 ## Validation

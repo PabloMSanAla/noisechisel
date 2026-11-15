@@ -15,7 +15,7 @@ with fits.open(GNU) as hl:
     dg=hl["DETECTIONS"].data.astype(bool); sg=hl["SKY"].data; stg=hl["SKY_STD"].data
 img=fits.getdata(IMG,0).astype(np.float32)
 r=NoiseChisel(device="cpu")(img)
-dt=r.detections.cpu().numpy(); st=r.sky_image().cpu().numpy(); stdt=r.std_image().cpu().numpy()
+dt=r.detections.cpu().numpy(); st=r.sky.cpu().numpy(); stdt=r.std.cpu().numpy()
 print("diff", (dg!=dt).sum(), (sg!=st).sum(), (stg!=stdt).sum(), dg.mean())
 d=dict(img=img,dg=dg,sg=sg,stg=stg,dt=dt,st=st,stdt=stdt)
 

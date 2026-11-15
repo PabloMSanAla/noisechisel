@@ -34,11 +34,11 @@ def _wcs_header(header):
 
 def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[dict] = None,
                overwrite: bool = True, rawoutput: bool = False, label: bool = False,
-               oneelempertile: bool = False):
+               oneelempertile: bool = False, image=None):
     """Write the result like ``astnoisechisel``: HDUs ``INPUT-NO-SKY``,
     ``DETECTIONS`` (uint8, or int32 labels with ``label=True``), ``SKY`` and
     ``SKY_STD``.  With ``rawoutput=True`` only DETECTIONS/SKY/SKY_STD are
-    written.  With ``oneelempertile=True`` SKY/SKY_STD hold one value per
+    written; ``INPUT-NO-SKY`` needs the input ``image``.  With ``oneelempertile=True`` SKY/SKY_STD hold one value per
     tile instead of being expanded to full resolution (much smaller file)."""
     fits = _fits()
     wh = _wcs_header(header)
@@ -59,24 +59,22 @@ def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[
             v = "none"
         phdu.header["HIERARCH " + k.upper()] = v
     hdus = [phdu]
+    sky_full = res.sky.cpu().numpy()
+    blank = np.isnan(np.asarray(image, dtype=np.float32)) if image is not None else np.isnan(sky_full)
     if oneelempertile:
-        sky = res.sky.cpu().numpy().astype(np.float32)
-        std = res.std.cpu().numpy().astype(np.float32)
+        sky = res.sky_tiles.cpu().numpy().astype(np.float32)
+        std = res.std_tiles.cpu().numpy().astype(np.float32)
     else:
-        sky = res.sky_image().cpu().numpy().astype(np.float32)
-        std = res.std_image().cpu().numpy().astype(np.float32)
-    blank = np.isnan(res.input.cpu().numpy()) if res.input is not None else None
-    if not rawoutput and res.input is not None:
-        hdus.append(img((res.input - res.sky_image()).cpu().numpy().astype(np.float32),
-                        "INPUT-NO-SKY"))
+        sky = sky_full.astype(np.float32)
+        std = res.std.cpu().numpy().astype(np.float32)
+    if not rawoutput and image is not None:
+        hdus.append(img(np.asarray(image, dtype=np.float32) - sky_full, "INPUT-NO-SKY"))
     det = (res.labels.cpu().numpy().astype(np.int32) if label
            else res.detections.cpu().numpy().astype(np.uint8))
     extra = {"DETSN": res.det_sn_threshold, "NUMLABS": res.num_detections}
-    if blank is not None and blank.any():
-        # Blank input pixels are blank in all outputs (as astnoisechisel).
-        if not oneelempertile:
-            sky[blank] = np.nan
-            std[blank] = np.nan
+    if blank.any():
+        # Blank input pixels are blank in all outputs (as astnoisechisel);
+        # res.sky / res.std already are.
         if label:
             det[blank] = -2147483648
             extra["BLANK"] = -2147483648
@@ -108,6 +106,6 @@ def run_fits(input_path: str, output_path: Optional[str] = None, hdu: Union[int,
     nc = NoiseChisel(device=device, **kwargs)
     res = nc(data)
     if output_path:
-        write_fits(res, output_path, header=header, config=asdict(nc.p),
+        write_fits(res, output_path, header=header, config=asdict(nc.p), image=data,
                    rawoutput=rawoutput, label=label, oneelempertile=oneelempertile)
     return res
