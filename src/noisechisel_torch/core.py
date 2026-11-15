@@ -974,7 +974,7 @@ class NoiseChisel:
                 ccl = "scipy"
         if ccl == "cupy" and (self.device.type != "cuda" or not _cupy_available()):
             raise ValueError("ccl='cupy' needs device='cuda' and CuPy "
-                             "(pip install 'noisechisel-torch[cuda]')")
+                             "(pip install 'noisechisel-torch[cuda12]' or '[cuda13]')")
         self.ccl = ccl
         self.verbose = verbose
         self.chunk_elems = int(chunk_elems)

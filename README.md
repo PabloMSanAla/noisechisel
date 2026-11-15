@@ -18,7 +18,8 @@ pip install "noisechisel-torch[fits] @ git+https://github.com/PabloMSanAla/noise
 # or from a clone:
 pip install .                 # core: numpy, scipy, torch
 pip install ".[fits]"         # + astropy for FITS I/O and the CLI
-pip install ".[fits,cuda]"    # + CuPy (CUDA 12) for fast GPU labelling
+pip install ".[fits,cuda12]"  # + CuPy for fast GPU labelling (or cuda13; match your driver,
+                              #   and do not mix with an already installed CuPy)
 pip install -e ".[test]"      # development (pytest, astropy)
 ```
 
@@ -109,7 +110,7 @@ is ≈ 0.004σ and tile ranks are very sensitive):
   `--blankasforeground`); no check images.
 * Apple MPS has no float64, so `device="mps"` falls back to the CPU.
 * Connected components: `ccl="cupy"` (CUDA, `cupyx.scipy.ndimage.label`,
-  install with `pip install "noisechisel-torch[cuda]"`), `ccl="torch"`
+  install with `pip install "noisechisel-torch[cuda12]"` or `[cuda13]`), `ccl="torch"`
   (iterative label propagation, any device, slow) or `ccl="scipy"` (CPU).
   `"auto"` uses cupy on CUDA when installed, else torch; scipy on CPU.  All
   produce identical labels.
