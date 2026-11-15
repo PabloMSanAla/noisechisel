@@ -248,3 +248,14 @@ def test_cuda_matches_cpu(image, result):
         assert torch.equal(res.labels.cpu(), result.labels)
         assert torch.equal(res.sky.cpu(), result.sky)
         assert torch.equal(res.std.cpu(), result.std)
+
+
+def test_numthreads(image):
+    prev = torch.get_num_threads()
+    ref = noisechisel(image[0], device="cpu")
+    one = noisechisel(image[0], device="cpu", numthreads=1)
+    assert torch.get_num_threads() == prev
+    assert torch.equal(ref.detections, one.detections)
+    assert torch.equal(ref.sky, one.sky) and torch.equal(ref.std, one.std)
+    with pytest.raises(ValueError):
+        NoiseChisel(numthreads=-1)

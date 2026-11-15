@@ -893,6 +893,9 @@ class NoiseChisel:
         scipy otherwise).
     verbose : bool
         Print step timings.
+    numthreads : int | None
+        CPU threads used by PyTorch during a run (Gnuastro's ``-N``).
+        ``None``/0: PyTorch's default (all physical cores).
     chunk_elems : int
         Max elements of the temporary per-tile tensors (memory knob).
     **params
@@ -900,7 +903,7 @@ class NoiseChisel:
     """
 
     def __init__(self, device=None, kernel="default", widekernel=None, ccl="auto",
-                 verbose=False, chunk_elems=16_000_000, **params):
+                 verbose=False, numthreads=None, chunk_elems=16_000_000, **params):
         valid = {f.name for f in fields(NoiseChiselParams)}
         bad = set(params) - valid
         if bad:
@@ -925,6 +928,9 @@ class NoiseChisel:
                              "(pip install 'noisechisel-torch[cuda12]' or '[cuda13]')")
         self.ccl = ccl
         self.verbose = verbose
+        if numthreads is not None and int(numthreads) < 0:
+            raise ValueError("numthreads must be >= 0")
+        self.numthreads = int(numthreads) if numthreads else None
         self.chunk_elems = int(chunk_elems)
         self.kernel = self._as_kernel(kernel)
         self.widekernel = self._as_kernel(widekernel)
@@ -1130,6 +1136,16 @@ class NoiseChisel:
     # ----------------------------------------------------------------- main
     @torch.no_grad()
     def __call__(self, image) -> NoiseChiselResult:
+        if self.numthreads is None:
+            return self._run(image)
+        prev = torch.get_num_threads()
+        torch.set_num_threads(self.numthreads)
+        try:
+            return self._run(image)
+        finally:
+            torch.set_num_threads(prev)
+
+    def _run(self, image) -> NoiseChiselResult:
         p = self.p
         dev = self.device
         t_all = time.perf_counter()
@@ -1143,7 +1159,8 @@ class NoiseChisel:
         whole = _Canvas((H, W), None, p.remainderfrac, dev)
         lt = _Canvas((H, W), p.largetilesize, p.remainderfrac, dev)
         if self.verbose:
-            print(f"NoiseChisel-torch on {tuple(img.shape)} [{dev}], tiles {grid.ny}x{grid.nx}")
+            print(f"NoiseChisel-torch on {tuple(img.shape)} [{dev}, {torch.get_num_threads()} threads], "
+                  f"tiles {grid.ny}x{grid.nx}")
 
         # 1. convolution --------------------------------------------------
         t = self._log("start")
@@ -1264,7 +1281,8 @@ class NoiseChisel:
 def noisechisel(image, device=None, **kwargs) -> NoiseChiselResult:
     """Functional interface: ``noisechisel(image, device='cuda', qthresh=0.3, ...)``.
 
-    ``kernel``, ``widekernel``, ``ccl``, ``verbose`` and ``chunk_elems`` go to
+    ``kernel``, ``widekernel``, ``ccl``, ``verbose``, ``numthreads`` and
+    ``chunk_elems`` go to
     the :class:`NoiseChisel` constructor; every other keyword is a NoiseChisel
     option (see :class:`NoiseChiselParams`).
     """

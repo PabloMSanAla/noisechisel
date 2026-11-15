@@ -28,7 +28,7 @@ Install only one CuPy package, matched to your driver's CUDA version.
 from noisechisel_torch import noisechisel, NoiseChisel, read_image
 
 img, hdr = read_image("image.fits", hdu=0)
-res = noisechisel(img, device="cuda")   # or "cpu"
+res = noisechisel(img, device="cuda")   # or device="cpu", numthreads=8
 res.detections                          # bool mask (H, W)
 res.sky_image(), res.std_image()        # per-pixel Sky and Sky STD
 
@@ -38,6 +38,7 @@ res = nc(img)
 
 ```bash
 noisechisel-torch image.fits -h 0 -o image_detected.fits --device cuda
+noisechisel-torch image.fits -h 0 -o image_detected.fits --device cpu -N 8   # 8 CPU threads
 ```
 
 Options keep Gnuastro's names and defaults (`tilesize`, `qthresh`, `erode`,

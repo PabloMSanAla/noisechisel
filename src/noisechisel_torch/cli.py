@@ -39,6 +39,8 @@ def build_parser():
     ap.add_argument("-h", "--hdu", default="0", help="input HDU (number or name)")
     ap.add_argument("-o", "--output", help="output FITS (default: <input>_detected.fits)")
     ap.add_argument("--device", default=None, help="cpu | cuda | cuda:N (default: auto)")
+    ap.add_argument("-N", "--numthreads", type=int, default=None, metavar="N",
+                    help="number of CPU threads (default: all cores)")
     ap.add_argument("--ccl", default="auto", choices=["auto", "cupy", "scipy"])
     ap.add_argument("--label", action="store_true", help="write labels instead of a 0/1 mask")
     ap.add_argument("--rawoutput", action="store_true", help="skip the INPUT-NO-SKY HDU")
@@ -68,7 +70,8 @@ def main(argv=None):
     out = a.output or os.path.splitext(os.path.basename(a.input))[0] + "_detected.fits"
     t0 = time.perf_counter()
     try:
-        res = run_fits(a.input, out, hdu=hdu, device=a.device, ccl=a.ccl, label=a.label,
+        res = run_fits(a.input, out, hdu=hdu, device=a.device, ccl=a.ccl,
+                       numthreads=a.numthreads, label=a.label,
                        rawoutput=a.rawoutput, oneelempertile=a.oneelempertile,
                        verbose=not a.quiet, **params)
     except OSError as e:
