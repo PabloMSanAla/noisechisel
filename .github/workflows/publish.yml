@@ -1,26 +1,38 @@
 name: publish
 
-# Build and upload to PyPI after the tests workflow passes on main.
-# Uploads only when the version in pyproject.toml is new (existing versions are skipped),
-# so bump `version` to release.
+# Upload to PyPI when a version tag (vX.Y.Z) is pushed on a commit of main.
+# The tag must match `version` in pyproject.toml, and the full test matrix must pass.
 # Uses PyPI trusted publishing: add this repository / workflow `publish.yml` /
 # environment `pypi` as a (pending) publisher of `noisechisel-torch` on pypi.org.
 
 on:
-  workflow_run:
-    workflows: [tests]
-    types: [completed]
-    branches: [main]
-  workflow_dispatch:
+  push:
+    tags: ["v*"]
 
 jobs:
-  build:
-    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+  check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 0
+      - name: Tag is on main and matches the package version
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main \
+            || { echo "::error::tag $GITHUB_REF_NAME is not on main"; exit 1; }
+          version=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ "$GITHUB_REF_NAME" = "v$version" ] \
+            || { echo "::error::tag $GITHUB_REF_NAME does not match version $version in pyproject.toml"; exit 1; }
+
+  tests:
+    needs: check
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
@@ -48,5 +60,3 @@ jobs:
           name: dist
           path: dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          skip-existing: true

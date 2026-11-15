@@ -77,8 +77,15 @@ pip install -e ".[test]"
 pytest
 ```
 
-To release, bump `version` in `pyproject.toml`. When the tests pass on `main`,
-the `publish` workflow uploads the new version to PyPI.
+To release, bump `version` in `pyproject.toml`, merge to `main`, then tag that
+commit and push the tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+The `publish` workflow checks the tag is on `main` and matches the version,
+runs the tests, and uploads to PyPI.
 
 ## Limitations
 
