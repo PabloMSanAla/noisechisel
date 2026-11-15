@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/PabloMSanAla/noisechisel/actions/workflows/tests.yml/badge.svg)](https://github.com/PabloMSanAla/noisechisel/actions/workflows/tests.yml)
 [![PyPI](https://img.shields.io/pypi/v/noisechisel-torch)](https://pypi.org/project/noisechisel-torch/)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PabloMSanAla/noisechisel/blob/main/notebooks/colab_gpu_benchmark.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/PabloMSanAla/noisechisel/blob/main/notebooks/colab_gpu.ipynb)
 
 A PyTorch port of [Gnuastro](https://www.gnu.org/software/gnuastro/)'s
 **NoiseChisel**, which detects faint signal in noise and measures the Sky and
