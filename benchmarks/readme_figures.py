@@ -67,26 +67,23 @@ fig.savefig(OUT+"comparison.png",facecolor="white"); plt.close(fig)
 
 # ---- figure 2: performance (seconds per 4088x4088 frame)
 tg=float(np.median(d["tg"])); tt=float(np.median(d["tt"]))
-panels=[("Apple M3 Max (CPU, multithreaded)",
-         [("Gnuastro 0.24 · 14 threads",tg,GRAY),("noisechisel-torch · 10 threads",tt,BLUE)]),
-        ("Google Colab (2 vCPU + NVIDIA T4)",
-         [("Gnuastro 0.24 · 2 vCPU",26.24,GRAY),("noisechisel-torch · CPU",27.46,BLUE),
-          ("noisechisel-torch · CUDA + CuPy",0.664,BLUE)])]
-fig,axs=plt.subplots(1,2,figsize=(12,3.4),dpi=110,gridspec_kw={"width_ratios":[1,1],"wspace":0.85})
-for ax,(title,bars) in zip(axs,panels):
-    names=[b[0] for b in bars][::-1]; vals=[b[1] for b in bars][::-1]; cols=[b[2] for b in bars][::-1]
-    base=bars[0][1]
-    y=np.arange(len(bars))
-    ax.barh(y,vals,color=cols,height=0.6,edgecolor="white",linewidth=2)
-    for yi,v in zip(y,vals):
-        sp=base/v; txt=f"{v:.2f} s" + ("" if abs(sp-1)<1e-9 else f"  ({sp:.1f}× vs Gnuastro)" if sp>=1 else f"  ({sp:.2f}×)")
-        ax.text(v+max(vals)*0.015,yi,txt,va="center",fontsize=9.5,color=INK)
-    ax.set_yticks(y,names,fontsize=9.5); ax.set_ylim(-0.6,len(bars)-0.4); ax.set_xlim(0,max(vals)*1.55)
-    ax.set_xlabel("seconds per 4088×4088 frame (lower is better)",fontsize=9)
-    ax.set_title(title,fontsize=11,loc="left",color=INK)
-    ax.xaxis.grid(True,color=GRID,lw=0.8); ax.set_axisbelow(True)
-    for k in ("top","right","left"): ax.spines[k].set_visible(False)
-    ax.tick_params(axis="y",length=0)
-fig.text(0.01,0.01,"All runs give bit-identical masks, Sky and STD. Median of 3 runs (Colab: frame1 of the notebook benchmark).",fontsize=8.5,color=INK2)
-fig.subplots_adjust(left=0.19,right=0.98,top=0.86,bottom=0.22)
+T4=0.664   # CUDA + CuPy on a Colab T4 (notebooks/colab_gpu_benchmark.ipynb)
+bars=[("Gnuastro 0.24 · CPU, 14 threads",tg,GRAY),
+      ("noisechisel-torch · CPU, 10 threads",tt,BLUE),
+      ("noisechisel-torch · NVIDIA T4 GPU",T4,BLUE)]
+fig,ax=plt.subplots(figsize=(8.5,2.9),dpi=110)
+names=[b[0] for b in bars][::-1]; vals=[b[1] for b in bars][::-1]; cols=[b[2] for b in bars][::-1]
+y=np.arange(len(bars))
+ax.barh(y,vals,color=cols,height=0.6,edgecolor="white",linewidth=2)
+for yi,v in zip(y,vals):
+    sp=tg/v; txt=f"{v:.2f} s" + ("" if abs(sp-1)<1e-9 else f"  ({sp:.1f}× faster)")
+    ax.text(v+max(vals)*0.015,yi,txt,va="center",fontsize=9.5,color=INK)
+ax.set_yticks(y,names,fontsize=9.5); ax.set_ylim(-0.6,len(bars)-0.4); ax.set_xlim(0,max(vals)*1.45)
+ax.set_xlabel("seconds per 4088×4088 frame (lower is better)",fontsize=9)
+ax.set_title("Run time, NoiseChisel default options",fontsize=11,loc="left",color=INK)
+ax.xaxis.grid(True,color=GRID,lw=0.8); ax.set_axisbelow(True)
+for k in ("top","right","left"): ax.spines[k].set_visible(False)
+ax.tick_params(axis="y",length=0)
+fig.text(0.01,0.02,"CPU: Apple M3 Max, median of 3 runs. GPU: Google Colab T4 with CuPy. All outputs bit-identical.",fontsize=8.5,color=INK2)
+fig.subplots_adjust(left=0.33,right=0.98,top=0.87,bottom=0.27)
 fig.savefig(OUT+"performance.png",facecolor="white"); plt.close(fig)
