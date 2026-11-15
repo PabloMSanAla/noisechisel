@@ -1,0 +1,40 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it and the NoiseChisel papers listed
+  under references.
+title: "noisechisel-torch: a PyTorch (CPU/GPU) port of Gnuastro's NoiseChisel"
+type: software
+authors:
+  - family-names: Sanchez Alarcon
+    given-names: Pablo M.
+version: 0.1.0
+license: GPL-3.0-or-later
+repository-code: https://github.com/PabloMSanAla/noisechisel
+references:
+  - type: article
+    title: Noise-based Detection and Segmentation of Nebulous Objects
+    authors:
+      - family-names: Akhlaghi
+        given-names: Mohammad
+      - family-names: Ichikawa
+        given-names: Takashi
+    journal: The Astrophysical Journal Supplement Series
+    volume: 220
+    issue: 1
+    start: 1
+    year: 2015
+    doi: 10.1088/0067-0049/220/1/1
+  - type: article
+    title: Carving out the low surface brightness universe with NoiseChisel
+    authors:
+      - family-names: Akhlaghi
+        given-names: Mohammad
+    year: 2019
+    identifiers:
+      - type: other
+        value: "arXiv:1909.11230"
+  - type: software
+    title: GNU Astronomy Utilities (Gnuastro)
+    authors:
+      - name: Gnuastro developers
+    url: https://www.gnu.org/software/gnuastro/

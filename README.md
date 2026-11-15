@@ -170,6 +170,35 @@ runs the tests, and uploads to PyPI.
 * Without CuPy, labelling on CUDA goes through host memory (scipy), which is
   slower.
 
+## Citation
+
+NoiseChisel is part of [Gnuastro](https://www.gnu.org/software/gnuastro/)
+([NoiseChisel manual](https://www.gnu.org/software/gnuastro/manual/html_node/NoiseChisel.html)).
+If you use this package, please cite the NoiseChisel papers:
+
+* Akhlaghi & Ichikawa (2015), *Noise-based Detection and Segmentation of
+  Nebulous Objects*, ApJS 220, 1.
+  [doi:10.1088/0067-0049/220/1/1](https://doi.org/10.1088/0067-0049/220/1/1),
+  [arXiv:1505.01664](https://arxiv.org/abs/1505.01664)
+* Akhlaghi (2019), *Carving out the low surface brightness universe with
+  NoiseChisel*. [arXiv:1909.11230](https://arxiv.org/abs/1909.11230)
+
+`astnoisechisel --cite` prints the BibTeX for the Gnuastro version you have.
+To cite this port, use `CITATION.cff` ("Cite this repository" on GitHub) or:
+
+```bibtex
+@software{noisechisel_torch,
+  author  = {Sanchez Alarcon, Pablo M.},
+  title   = {noisechisel-torch: a PyTorch (CPU/GPU) port of Gnuastro's NoiseChisel},
+  url     = {https://github.com/PabloMSanAla/noisechisel},
+  version = {0.1.0},
+  year    = {2026}
+}
+```
+
+If this package is useful to you, please give the repository a ⭐ on
+[GitHub](https://github.com/PabloMSanAla/noisechisel).
+
 ## License
 
 GPL-3.0-or-later. This is a derivative of Gnuastro, © Free Software Foundation.
