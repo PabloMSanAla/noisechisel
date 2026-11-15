@@ -9,9 +9,9 @@ A PyTorch port of [Gnuastro](https://www.gnu.org/software/gnuastro/)'s
 Sky STD. It runs on CPU or CUDA, and its detection mask, Sky and Sky STD are
 **bit-identical** to `astnoisechisel` 0.24 with default options.
 
-![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/main/docs/images/comparison.png)
+![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/e443b80d24baf68303d4649e5ebe3ccb41da189d/docs/images/comparison.png)
 
-![Run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/main/docs/images/performance.png)
+![Run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/e443b80d24baf68303d4649e5ebe3ccb41da189d/docs/images/performance.png)
 
 ## Install
 
