@@ -259,3 +259,15 @@ def test_numthreads(image):
     assert torch.equal(ref.sky, one.sky) and torch.equal(ref.std, one.std)
     with pytest.raises(ValueError):
         NoiseChisel(numthreads=-1)
+
+
+def test_fits_getdata_input(tmp_path, image):
+    """Arrays from astropy.io.fits.getdata are big-endian; results must not change."""
+    fits = pytest.importorskip("astropy.io.fits")
+    path = tmp_path / "in.fits"
+    fits.writeto(path, image[0])
+    data = fits.getdata(path)
+    assert data.dtype.byteorder == ">"
+    a = noisechisel(data, device="cpu")
+    b = noisechisel(image[0], device="cpu")
+    assert torch.equal(a.detections, b.detections) and torch.equal(a.sky, b.sky)

@@ -22,7 +22,7 @@ import numpy as np
 import torch
 from astropy.io import fits
 
-from noisechisel_torch import NoiseChisel, read_image
+from noisechisel_torch import NoiseChisel
 
 
 def run_gnuastro(path, hdu, out, opts, threads):
@@ -116,7 +116,7 @@ def main():
         det_g, sky_g, std_g, medstd_g, detsn_g = load_gnuastro(gout)
 
         hdu = int(a.hdu) if a.hdu.isdigit() else a.hdu
-        data, _ = read_image(path, hdu)
+        data = fits.getdata(path, ext=hdu)
         times = []
         for _ in range(max(1, a.repeat)):
             t0 = time.perf_counter()

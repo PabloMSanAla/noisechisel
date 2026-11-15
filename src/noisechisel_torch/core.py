@@ -1149,6 +1149,9 @@ class NoiseChisel:
         p = self.p
         dev = self.device
         t_all = time.perf_counter()
+        if not torch.is_tensor(image):
+            # e.g. astropy.io.fits.getdata(): big-endian and/or integer arrays
+            image = np.asarray(image, dtype=np.float32)
         img = torch.as_tensor(image).to(dev)
         if img.ndim != 2:
             raise ValueError("only 2D images are supported")

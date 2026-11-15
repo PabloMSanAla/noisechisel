@@ -22,18 +22,6 @@ def _fits():
     return fits
 
 
-def read_image(path: str, hdu: Union[int, str] = 0):
-    """Read a 2D image (as float32) and its header from a FITS file."""
-    fits = _fits()
-    with fits.open(path, memmap=False) as hl:
-        h = hl[hdu]
-        data = np.asarray(h.data, dtype=np.float32)
-        header = h.header.copy()
-    if data.ndim != 2:
-        raise ValueError(f"{path}[{hdu}] is not a 2D image")
-    return data, header
-
-
 def _wcs_header(header):
     if header is None:
         return None
@@ -116,7 +104,7 @@ def run_fits(input_path: str, output_path: Optional[str] = None, hdu: Union[int,
              oneelempertile: bool = False, **kwargs):
     """Run NoiseChisel on a FITS image; optionally write the output file.
     Extra keywords go to :class:`~noisechisel_torch.NoiseChisel`."""
-    data, header = read_image(input_path, hdu)
+    data, header = _fits().getdata(input_path, ext=hdu, header=True)
     nc = NoiseChisel(device=device, **kwargs)
     res = nc(data)
     if output_path:

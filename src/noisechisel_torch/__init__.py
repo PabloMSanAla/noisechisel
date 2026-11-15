@@ -8,7 +8,7 @@ from .core import (
     gaussian_kernel,
     noisechisel,
 )
-from .io import read_image, run_fits, write_fits
+from .io import run_fits, write_fits
 
 __version__ = "0.1.0"
 
@@ -19,7 +19,6 @@ __all__ = [
     "NoiseChiselResult",
     "gaussian_kernel",
     "noisechisel",
-    "read_image",
     "run_fits",
     "write_fits",
     "__version__",

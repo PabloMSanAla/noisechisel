@@ -66,7 +66,11 @@ def main():
     else:
         print("cupy NOT installed: ccl='cupy' skipped")
 
-    images = [(p, nct.read_image(p)[0]) for p in a.images] or [("synthetic 4088^2", synthetic())]
+    if a.images:
+        from astropy.io import fits
+        images = [(p, fits.getdata(p)) for p in a.images]
+    else:
+        images = [("synthetic 4088^2", synthetic())]
     cfgs = [("cpu", "scipy")]
     if _cupy_available():
         cfgs.append(("cuda", "cupy"))

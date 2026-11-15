@@ -37,9 +37,10 @@ Install only one CuPy package, matched to your driver's CUDA version.
 ## Usage
 
 ```python
-from noisechisel_torch import noisechisel, NoiseChisel, read_image
+from astropy.io import fits
+from noisechisel_torch import noisechisel, NoiseChisel
 
-img, hdr = read_image("image.fits", hdu=0)
+img = fits.getdata("image.fits", ext=0)
 res = noisechisel(img, device="cuda")   # or device="cpu", numthreads=8
 res.detections                          # bool mask (H, W)
 res.sky_image(), res.std_image()        # per-pixel Sky and Sky STD

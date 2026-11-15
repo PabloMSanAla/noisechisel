@@ -6,14 +6,14 @@ one image (the timing figures are made by ``benchmarks/scaling.py``).
 """
 import os, sys, tempfile, subprocess, numpy as np
 from astropy.io import fits
-from noisechisel_torch import NoiseChisel, read_image
+from noisechisel_torch import NoiseChisel
 IMG=sys.argv[1]
 GNU=os.path.join(tempfile.mkdtemp(),"gnu.fits")
 OUT=sys.argv[2] if len(sys.argv)>2 else "docs/images/"
 subprocess.run(["astnoisechisel",IMG,"-h0","-o"+GNU,"--quiet"],check=True)
 with fits.open(GNU) as hl:
     dg=hl["DETECTIONS"].data.astype(bool); sg=hl["SKY"].data; stg=hl["SKY_STD"].data
-img,_=read_image(IMG,0)
+img=fits.getdata(IMG,0).astype(np.float32)
 r=NoiseChisel(device="cpu")(img)
 dt=r.detections.cpu().numpy(); st=r.sky_image().cpu().numpy(); stdt=r.std_image().cpu().numpy()
 print("diff", (dg!=dt).sum(), (sg!=st).sum(), (stg!=stdt).sum(), dg.mean())
