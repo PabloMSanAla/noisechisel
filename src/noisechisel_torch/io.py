@@ -53,6 +53,8 @@ def write_fits(res: NoiseChiselResult, path: str, header=None, config: Optional[
     phdu.header["EXTNAME"] = "NOISECHISEL-CONFIG"
     phdu.header["PROGRAM"] = "noisechisel-torch"
     for k, v in (config or {}).items():
+        if k in ("tilesize", "largetilesize") and isinstance(v, (tuple, list)):
+            v = tuple(v)[::-1]          # FITS (x, y) order, as Gnuastro writes it
         if isinstance(v, (tuple, list)):
             v = ",".join(str(x) for x in v)
         if v is None:

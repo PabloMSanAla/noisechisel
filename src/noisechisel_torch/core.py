@@ -116,9 +116,9 @@ class NoiseChiselParams:
     (``astnoisechisel -P``), 2D case."""
 
     # Tessellation
-    tilesize: Tuple[int, int] = (30, 30)       # --tilesize (y, x)
+    tilesize: Tuple[int, int] = (30, 30)       # --tilesize, here (rows, cols) = Gnuastro's reversed
     remainderfrac: float = 0.1                 # --remainderfrac
-    largetilesize: Optional[Tuple[int, int]] = (200, 200)  # --largetilesize
+    largetilesize: Optional[Tuple[int, int]] = (200, 200)  # --largetilesize, (rows, cols)
     # (None: fill holes / open pseudo-detections on the whole image instead
     #  of per large tile; avoids tile-edge artefacts, deviates from C.)
 
@@ -978,14 +978,16 @@ class NoiseChisel:
             if k != "default":
                 raise ValueError("kernel must be 'default', None or an array")
             k, flip = DEFAULT_KERNEL, False
-        k = torch.as_tensor(np.asarray(k, dtype=np.float32) if not torch.is_tensor(k) else k,
-                            dtype=torch.float32, device=self.device)
+        k = np.asarray(k.cpu() if torch.is_tensor(k) else k, dtype=np.float32)
         if k.ndim != 2:
             raise ValueError("kernel must be 2D")
-        if flip:                       # as gal_fits_img_read_kernel: normalise, flip
-            k = torch.nan_to_num(k, nan=0.0)
-            k = torch.flip(k / k.sum(), (0, 1))
-        return k
+        if flip:
+            # As gal_fits_img_read_kernel: NaN -> 0, sequential double sum,
+            # every element multiplied (in double) by 1/sum, then flipped.
+            k = np.nan_to_num(k, nan=0.0)
+            inv = 1.0 / np.cumsum(k.ravel(), dtype=np.float64)[-1]
+            k = (k.astype(np.float64) * inv).astype(np.float32)[::-1, ::-1].copy()
+        return torch.as_tensor(k, device=self.device)
 
     def _log(self, msg, t0=None):
         if self.verbose:

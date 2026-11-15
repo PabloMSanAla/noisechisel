@@ -14,6 +14,15 @@ from typing import get_args, get_origin, get_type_hints
 
 from .core import NoiseChiselParams
 
+# Sizes given in FITS (x, y) order on the command line, as in Gnuastro; the
+# Python API uses numpy (rows, cols) order.
+FITS_ORDER = ("tilesize", "largetilesize")
+
+# Gnuastro's short option names.
+SHORT = {"meanmedqdiff": "-Q", "qthresh": "-t", "erode": "-e", "opening": "-p",
+         "minskyfrac": "-B", "sigmaclip": "-s", "dthresh": "-R", "snminarea": "-m",
+         "snquant": "-c", "detgrowquant": "-d"}
+
 
 def _parse_value(text, typ):
     origin = get_origin(typ)
@@ -30,6 +39,15 @@ def _parse_value(text, typ):
     return typ(text)
 
 
+def _hdu(text):
+    return int(text) if text.lstrip("-").isdigit() else text
+
+
+def _read_kernel(path, hdu):
+    from astropy.io import fits
+    return fits.getdata(path, ext=_hdu(hdu))
+
+
 def build_parser():
     ap = argparse.ArgumentParser(
         prog="noisechisel-torch", add_help=False,
@@ -42,6 +60,11 @@ def build_parser():
     ap.add_argument("-N", "--numthreads", type=int, default=None, metavar="N",
                     help="number of CPU threads (default: all cores)")
     ap.add_argument("--ccl", default="auto", choices=["auto", "cupy", "scipy"])
+    ap.add_argument("-k", "--kernel", default=None,
+                    help="kernel FITS file, or 'none' (default: Gnuastro's built-in kernel)")
+    ap.add_argument("--khdu", default="1", help="HDU of --kernel")
+    ap.add_argument("--widekernel", default=None, help="wide kernel FITS file")
+    ap.add_argument("--whdu", default="1", help="HDU of --widekernel")
     ap.add_argument("--label", action="store_true", help="write labels instead of a 0/1 mask")
     ap.add_argument("--rawoutput", action="store_true", help="skip the INPUT-NO-SKY HDU")
     ap.add_argument("--oneelempertile", action="store_true",
@@ -49,8 +72,13 @@ def build_parser():
     ap.add_argument("-q", "--quiet", action="store_true")
     hints = get_type_hints(NoiseChiselParams)
     for f in fields(NoiseChiselParams):
-        ap.add_argument(f"--{f.name}", dest=f.name, default=None, metavar="VAL",
-                        help=f"(default: {f.default})")
+        names = ([SHORT[f.name]] if f.name in SHORT else []) + [f"--{f.name}"]
+        if hints[f.name] is bool:       # flags, as in Gnuastro
+            ap.add_argument(*names, dest=f.name, action="store_const", const=True,
+                            default=None, help="(default: off)")
+        else:
+            ap.add_argument(*names, dest=f.name, default=None, metavar="VAL",
+                            help=f"(default: {f.default})")
     ap.set_defaults(_hints=hints)
     return ap
 
@@ -64,9 +92,17 @@ def main(argv=None):
     params = {}
     for f in fields(NoiseChiselParams):
         v = getattr(a, f.name)
-        if v is not None:
+        if v is True:
+            params[f.name] = True
+        elif v is not None:
             params[f.name] = _parse_value(v, hints[f.name])
-    hdu = int(a.hdu) if a.hdu.lstrip("-").isdigit() else a.hdu
+            if f.name in FITS_ORDER and isinstance(params[f.name], tuple):
+                params[f.name] = params[f.name][::-1]
+    hdu = _hdu(a.hdu)
+    if a.kernel is not None:
+        params["kernel"] = None if a.kernel.lower() == "none" else _read_kernel(a.kernel, a.khdu)
+    if a.widekernel is not None:
+        params["widekernel"] = _read_kernel(a.widekernel, a.whdu)
     out = a.output or os.path.splitext(os.path.basename(a.input))[0] + "_detected.fits"
     t0 = time.perf_counter()
     try:

@@ -57,11 +57,81 @@ noisechisel-torch image.fits -h 0 -o image_detected.fits --device cuda
 noisechisel-torch image.fits -h 0 -o image_detected.fits --device cpu -N 8   # 8 CPU threads
 ```
 
-Options keep Gnuastro's names and defaults (`tilesize`, `qthresh`, `erode`,
-`snquant`, ...; see `NoiseChiselParams`). The output file has the same HDUs as
-`astnoisechisel`, including the sky-subtracted `INPUT-NO-SKY` (only in the
-file; subtract `res.sky` yourself in Python). Add `--oneelempertile` to write Sky/STD with one value per
-tile, which cuts a 4088² output from ~200 MB to ~85 MB.
+The output file has the same HDUs as `astnoisechisel`, including the
+sky-subtracted `INPUT-NO-SKY`, which exists only in the file (in Python,
+subtract `res.sky` yourself). Add `--oneelempertile` to write Sky/STD with one
+value per tile, which cuts a 4088² output from ~200 MB to ~85 MB.
+
+## Gnuastro options
+
+Every `astnoisechisel` option is a keyword argument with the same name and
+default. Values that Gnuastro writes as `a,b` are tuples in Python. Booleans
+are `True`/`False`. The CLI takes the Gnuastro syntax unchanged, including the
+short forms.
+
+```bash
+astnoisechisel    img.fits -h0 --tilesize=50,40 -t0.35 -d0.8 --interponlyblank -k kernel.fits
+noisechisel-torch img.fits -h0 --tilesize=50,40 -t0.35 -d0.8 --interponlyblank -k kernel.fits
+```
+
+```python
+from astropy.io import fits
+from noisechisel_torch import noisechisel
+
+res = noisechisel(img, tilesize=(40, 50), qthresh=0.35, detgrowquant=0.8,
+                  interponlyblank=True, kernel=fits.getdata("kernel.fits", ext=1))
+```
+
+**Tile sizes:** Gnuastro gives `--tilesize` and `--largetilesize` in FITS
+order (x, y). Python uses numpy order (rows, cols), so `--tilesize=50,40` is
+`tilesize=(40, 50)`. The CLI converts for you.
+
+| Gnuastro | Python keyword | Default |
+|---|---|---|
+| `-k`, `--kernel FILE` (`--khdu`) | `kernel=fits.getdata(FILE)`; `None` = no convolution | built-in FWHM=2 Gaussian |
+| `--widekernel FILE` (`--whdu`) | `widekernel=fits.getdata(FILE)` | `None` |
+| `--tilesize` | `tilesize` | `(30, 30)` |
+| `--remainderfrac` | `remainderfrac` | `0.1` |
+| `--largetilesize` | `largetilesize` | `(200, 200)` |
+| `--interpnumngb` | `interpnumngb` | `15` |
+| `--interpmetric` | `interpmetric` (`"radial"` or `"manhattan"`) | `"radial"` |
+| `--interponlyblank` | `interponlyblank` | `False` |
+| `--smoothwidth` | `smoothwidth` | `5` |
+| `-Q`, `--meanmedqdiff` | `meanmedqdiff` | `0.01` |
+| `-t`, `--qthresh` | `qthresh` | `0.3` |
+| `--noerodequant` | `noerodequant` | `0.99` |
+| `--outliernumngb` | `outliernumngb` | `15` |
+| `--outliersigma` | `outliersigma` | `5.0` |
+| `--outliersclip` | `outliersclip` | `(3.0, 0.2)` |
+| `-e`, `--erode` | `erode` | `2` |
+| `--erodengb` | `erodengb` | `4` |
+| `-p`, `--opening` | `opening` | `1` |
+| `--openingngb` | `openingngb` | `8` |
+| `-B`, `--minskyfrac` | `minskyfrac` | `0.7` |
+| `--skyfracnoblank` | `skyfracnoblank` | `False` |
+| `-s`, `--sigmaclip` | `sigmaclip` | `(3.0, 0.2)` |
+| `-R`, `--dthresh` | `dthresh` | `0.0` |
+| `--dopening` | `dopening` | `1` |
+| `--dopeningngb` | `dopeningngb` | `4` |
+| `--holengb` | `holengb` | `8` |
+| `--pseudoconcomp` | `pseudoconcomp` | `4` |
+| `-m`, `--snminarea` | `snminarea` | `10` |
+| `--minnumfalse` | `minnumfalse` | `100` |
+| `-c`, `--snquant` | `snquant` | `0.99` |
+| `--snthresh` | `snthresh` (`None` = measure it) | `None` |
+| `-d`, `--detgrowquant` | `detgrowquant` | `0.9` |
+| `--detgrowmaxholesize` | `detgrowmaxholesize` | `100` |
+| `--cleangrowndet` | `cleangrowndet` | `False` |
+| `-N`, `--numthreads` | `numthreads` | all cores |
+
+Output options are on the CLI and on `run_fits` / `write_fits`: `-h`/`--hdu`,
+`-o`/`--output`, `--label` (int32 labels instead of a 0/1 mask), `--rawoutput`
+(no `INPUT-NO-SKY`) and `--oneelempertile`. Options only in this version:
+`device` and `ccl` (labelling backend). `NoiseChiselParams` lists the options
+in Python, and `noisechisel-torch --help` on the command line.
+
+Not available: check images (`--check*`), `--blankasforeground`,
+`--numchannels` other than 1, and `--convolved`.
 
 ## Validation
 

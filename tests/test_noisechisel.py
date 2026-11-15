@@ -271,3 +271,35 @@ def test_fits_getdata_input(tmp_path, image):
     a = noisechisel(data, device="cpu")
     b = noisechisel(image[0], device="cpu")
     assert torch.equal(a.detections, b.detections) and torch.equal(a.sky, b.sky)
+
+
+def test_cli_tilesize_fits_order(tmp_path, image, monkeypatch):
+    """--tilesize=X,Y is in FITS order, as in astnoisechisel."""
+    pytest.importorskip("astropy.io.fits")
+    from noisechisel_torch import cli
+    seen = {}
+    monkeypatch.setattr("noisechisel_torch.io.run_fits", lambda *a, **k: seen.update(k) or
+                        noisechisel(image[0], device="cpu"))
+    cli.main([str(tmp_path / "x.fits"), "-q", "--tilesize", "30,45", "--largetilesize", "200,100"])
+    assert seen["tilesize"] == (45, 30) and seen["largetilesize"] == (100, 200)
+
+
+@pytest.mark.skipif(shutil.which("astnoisechisel") is None, reason="Gnuastro not installed")
+def test_cli_options_identical_to_gnuastro(tmp_path, image):
+    """Same command line (custom asymmetric kernel, non-square tiles, short
+    options, a flag) gives the same output as astnoisechisel."""
+    fits = pytest.importorskip("astropy.io.fits")
+    from noisechisel_torch import cli, gaussian_kernel
+    inp, kern = tmp_path / "in.fits", tmp_path / "k.fits"
+    fits.writeto(inp, image[0])
+    k = np.asarray(gaussian_kernel(2.5, 5), dtype=np.float32).copy()
+    k[:, :2] *= 1.5
+    fits.writeto(kern, k)
+    opts = ["-k", str(kern), "--khdu=0", "--tilesize=30,40", "-t0.35", "--interponlyblank"]
+    subprocess.run(["astnoisechisel", str(inp), "-h0", "-o", str(tmp_path / "g.fits"),
+                    "--quiet"] + opts, check=True)
+    assert cli.main([str(inp), "-h0", "-o", str(tmp_path / "t.fits"), "-q"] + opts) == 0
+    for e in ("DETECTIONS", "SKY", "SKY_STD"):
+        a = fits.getdata(tmp_path / "g.fits", e)
+        b = fits.getdata(tmp_path / "t.fits", e)
+        assert np.array_equal(a, b, equal_nan=True), e
