@@ -186,16 +186,6 @@ If you use this package, please cite the NoiseChisel papers:
 `astnoisechisel --cite` prints the BibTeX for the Gnuastro version you have.
 To cite this port, use `CITATION.cff` ("Cite this repository" on GitHub) or:
 
-```bibtex
-@software{noisechisel_torch,
-  author  = {Sanchez Alarcon, Pablo M.},
-  title   = {noisechisel-torch: a PyTorch (CPU/GPU) port of Gnuastro's NoiseChisel},
-  url     = {https://github.com/PabloMSanAla/noisechisel},
-  version = {0.1.0},
-  year    = {2026}
-}
-```
-
 If this package is useful to you, please give the repository a ⭐ on
 [GitHub](https://github.com/PabloMSanAla/noisechisel).
 
