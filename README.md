@@ -12,7 +12,7 @@ options (MPS output is tested against the CPU output).
 
 ![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/comparison.png)
 
-![CPU vs GPU run time per 4088×4088 frame](docs/images/performance.png)
+![CPU vs GPU run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/8f09fa1c8ab4a01792d08637e21793909747ce68/docs/images/performance.png)
 
 ### Scaling with CPU threads
 
