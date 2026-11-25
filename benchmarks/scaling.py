@@ -5,7 +5,8 @@ writing the output FITS file (default options, same HDUs).
 
     python benchmarks/scaling.py IMAGE.fits --workdir /tmp/nc \
         --csv benchmarks/results/scaling.csv --plot docs/images/scaling.png \
-        --comparison-plot docs/images/performance.png --compare-threads 10 --gpu-time 0.664
+        --comparison-plot docs/images/performance.png --compare-threads 10 \
+        --mps-time 1.57 --gpu-time 0.664
 """
 from __future__ import annotations
 
@@ -88,14 +89,18 @@ def plot_scaling(rows, path, title):
     _save(fig, path)
 
 
-def plot_comparison(rows, path, threads, gpu_time=None, gpu_label="NVIDIA T4 GPU"):
-    """Bars: both programs at ``threads`` CPU threads, plus an optional GPU time."""
+def plot_comparison(rows, path, threads, gpu_time=None, gpu_label="NVIDIA T4 GPU",
+                    mps_time=None):
+    """Bars: both programs at ``threads`` CPU threads, plus optional GPU times
+    (Apple MPS and ``gpu_label``)."""
     plt = _pyplot()
     pick = {r["program"]: r["time_s"] for r in rows if r["threads"] == threads}
     tg = pick["Gnuastro 0.24"]
     bars = [(f"Gnuastro 0.24 · CPU, {threads} threads", tg, COLORS["Gnuastro 0.24"]),
             (f"noisechisel-torch · CPU, {threads} threads", pick["noisechisel-torch"],
              COLORS["noisechisel-torch"])]
+    if mps_time:
+        bars.append(("noisechisel-torch · M3 Max GPU (MPS)", mps_time, COLORS["noisechisel-torch"]))
     if gpu_time:
         bars.append((f"noisechisel-torch · {gpu_label}", gpu_time, COLORS["noisechisel-torch"]))
     fig, ax = plt.subplots(figsize=(8.5, 0.9 + 0.65 * len(bars)), dpi=110)
@@ -118,10 +123,16 @@ def plot_comparison(rows, path, threads, gpu_time=None, gpu_label="NVIDIA T4 GPU
     ax.tick_params(axis="y", length=0)
     note = (f"CPU: {rows[0].get('machine', '')}, median of {_nruns(rows)} runs incl. FITS I/O "
             "(benchmarks/scaling.py).")
+    if mps_time:
+        note += "\nMPS: Apple M3 Max, computation only, median of 4 runs."
     if gpu_time:
-        note += f"\nGPU: {gpu_label} on Google Colab with CuPy, computation only."
-    fig.text(0.01, 0.02, note, fontsize=8.5, color=INK2, va="bottom")
-    fig.subplots_adjust(left=0.33, right=0.98, top=0.85, bottom=0.36)
+        note += f"\n{gpu_label}: Google Colab with CuPy, computation only."
+    if mps_time or gpu_time:
+        note += "\nSpeed-ups are relative to Gnuastro, whose time includes FITS I/O."
+    fig.text(0.01, 0.02, note, fontsize=8.5, color=INK2, va="bottom", linespacing=1.4)
+    height = fig.get_figheight()
+    fig.subplots_adjust(left=0.33, right=0.98, top=1 - 0.45 / height,
+                        bottom=(0.65 + 0.17 * (note.count("\n") + 1)) / height)
     _save(fig, path)
 
 
@@ -144,6 +155,8 @@ def main():
     ap.add_argument("--gpu-time", type=float, default=None,
                     help="GPU seconds per frame to add to the bar chart (e.g. from the Colab notebook)")
     ap.add_argument("--gpu-label", default="NVIDIA T4 GPU")
+    ap.add_argument("--mps-time", type=float, default=None,
+                    help="Apple GPU (device='mps') seconds per frame, computation only")
     ap.add_argument("--from-csv", action="store_true", help="only re-plot an existing --csv")
     a = ap.parse_args()
 
@@ -181,7 +194,8 @@ def main():
     if a.plot:
         plot_scaling(rows, a.plot, "Run time vs CPU threads, simulated Roman WFI frame (4088×4088)")
     if a.comparison_plot:
-        plot_comparison(rows, a.comparison_plot, a.compare_threads, a.gpu_time, a.gpu_label)
+        plot_comparison(rows, a.comparison_plot, a.compare_threads, a.gpu_time, a.gpu_label,
+                        a.mps_time)
 
 
 if __name__ == "__main__":

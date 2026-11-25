@@ -56,7 +56,7 @@ def build_parser():
     ap.add_argument("input", help="input FITS image")
     ap.add_argument("-h", "--hdu", default="0", help="input HDU (number or name)")
     ap.add_argument("-o", "--output", help="output FITS (default: <input>_detected.fits)")
-    ap.add_argument("--device", default=None, help="cpu | cuda | cuda:N (default: auto)")
+    ap.add_argument("--device", default=None, help="cpu | cuda | cuda:N | mps (default: cuda if available, else cpu)")
     ap.add_argument("-N", "--numthreads", type=int, default=None, metavar="N",
                     help="number of CPU threads (default: all cores)")
     ap.add_argument("--ccl", default="auto", choices=["auto", "cupy", "scipy"])
