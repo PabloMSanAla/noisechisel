@@ -6,12 +6,13 @@
 
 A PyTorch port of [Gnuastro](https://www.gnu.org/software/gnuastro/)'s
 **NoiseChisel**, which detects faint signal in noise and measures the Sky and
-Sky STD. It runs on CPU or CUDA, and its detection mask, Sky and Sky STD are
-**bit-identical** to `astnoisechisel` 0.24 with default options.
+Sky STD. It runs on CPU, CUDA or Apple GPUs (MPS), and its detection mask, Sky
+and Sky STD are **bit-identical** to `astnoisechisel` 0.24 with default
+options (MPS output is tested against the CPU output).
 
 ![Gnuastro vs noisechisel-torch outputs](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/comparison.png)
 
-![CPU vs GPU run time per 4088×4088 frame](https://raw.githubusercontent.com/PabloMSanAla/noisechisel/7e12eafcb5def5b281cd5c516f8d2b5dd89f612f/docs/images/performance.png)
+![CPU vs GPU run time per 4088×4088 frame](docs/images/performance.png)
 
 ### Scaling with CPU threads
 
@@ -22,7 +23,9 @@ one thread), and noisechisel-torch is faster at every thread count. The CPU
 times in the bar chart above are taken from this test at 10 threads.
 
 All benchmarks use simulated Roman WFI frames (4088×4088). CPU: Apple M3 Max,
-median of 4 runs including FITS read and write. GPU: Colab T4 with CuPy.
+median of 4 runs including FITS read and write. GPU times are computation only:
+Colab T4 with CuPy, and the M3 Max GPU through MPS (torch 2.15). On the same
+frame, MPS took 1.71 s including FITS read and write.
 Data: `benchmarks/results/scaling_m3max.csv`, made with `benchmarks/scaling.py`.
 
 ## Install
@@ -61,6 +64,34 @@ The output file has the same HDUs as `astnoisechisel`, including the
 sky-subtracted `INPUT-NO-SKY`, which exists only in the file (in Python,
 subtract `res.sky` yourself). Add `--oneelempertile` to write Sky/STD with one
 value per tile, which cuts a 4088² output from ~200 MB to ~85 MB.
+
+## Apple GPUs (MPS)
+
+```python
+res = noisechisel(img, device="mps")     # CLI: --device mps
+```
+
+MPS needs torch 2.7 or later and is never selected by default. It returns the
+same bits as the CPU, with the result tensors on the GPU. Metal has no float64,
+so the image convolution runs in a shader that does float64 arithmetic with
+integers, the other float64 steps run on the CPU, and labelling uses scipy.
+
+| Simulated frame | CPU (10 threads) | MPS |
+|---|---|---|
+| 512² | 0.067 s | 0.057 s |
+| 1024² | 0.18 s | 0.13 s |
+| 2048² | 0.52 s | 0.36 s |
+| 4088² | 2.0 s | 1.2 s |
+| 8176² | 7.9 s | 5.5 s |
+
+Apple M3 Max, torch 2.15, computation only (`benchmarks/gpu_check.py` times the
+4088² frame). 8176²: median of 5 runs; other sizes: best of 5 runs.
+
+With a `RuntimeWarning`, the whole run moves to the CPU (and so do the result
+tensors) if torch is too old, MPS is unavailable or an operator is missing, or
+the image has non-zero values smaller than 2⁻¹⁰⁰ or larger than 2¹⁰⁰ in
+magnitude (Apple GPUs flush tiny float32 values to zero). If only the shader
+cannot be used, the convolution alone runs on the CPU.
 
 ## Gnuastro options
 
@@ -166,7 +197,8 @@ runs the tests, and uploads to PyPI.
 
 * 2D single-channel images only. NaN pixels are never detected, and check
   images are not written.
-* Apple MPS has no float64, so `device="mps"` runs on the CPU.
+* `device="mps"` is tested on an M3 Max with macOS 26 and torch 2.7.0, 2.7.1
+  and 2.15.
 * Without CuPy, labelling on CUDA goes through host memory (scipy), which is
   slower.
 

@@ -46,7 +46,12 @@ Fidelity: the arithmetic follows Gnuastro 0.24 closely enough to reproduce
 its output bit for bit on real data (float32 products accumulated in double
 in the convolution, Gnuastro's neighbour visiting order for interpolation and
 outlier rejection, sigma/MAD clipping exactly as ``gal_statistics_clip_*``).
-Apple MPS has no float64, so ``device="mps"`` falls back to the CPU.
+
+Apple MPS (``device="mps"``) has no float64.  To give the same output as the
+CPU, the image convolution runs in a Metal shader that does the float64
+arithmetic with integers (:mod:`noisechisel_torch._mps`), the other float64
+steps (tile statistics on sorted rows, the tile grid, label S/N sums) run on
+the CPU, and everything else runs on the GPU.  Labelling uses scipy.
 
 Known differences from the C program: 2D only, single channel
 (``numchannels=1,1``); NaN pixels are treated as never-detected background
@@ -54,6 +59,7 @@ Known differences from the C program: 2D only, single channel
 """
 from __future__ import annotations
 
+import copy
 import heapq
 import math
 import time
@@ -65,6 +71,8 @@ from typing import Optional, Sequence, Tuple, Union
 import numpy as np
 import torch
 import torch.nn.functional as F
+
+from . import _mps
 
 __all__ = [
     "NoiseChisel",
@@ -190,14 +198,15 @@ class NoiseChiselResult:
 
     def meta(self) -> dict:
         """Scalar results (what ``info()`` prints) as a dict."""
-        sky = self.sky_tiles[torch.isfinite(self.sky_tiles)]
+        sky = self.sky_tiles.to(_host(self.sky_tiles.device))
+        sky = sky[torch.isfinite(sky)]
         return {
             "shape": self.shape,
             "device": str(self.detections.device),
             "tile_grid": tuple(self.sky_tiles.shape),
             "num_initial_detections": self.num_initial_detections,
             "num_detections": self.num_detections,
-            "detected_fraction": float(self.detections.float().mean()),
+            "detected_fraction": int(self.detections.sum()) / self.detections.numel(),
             "det_sn_threshold": self.det_sn_threshold,
             "median_sky": float(sky.median()) if sky.numel() else float("nan"),
             "min_std": self.min_std,
@@ -220,6 +229,21 @@ class NoiseChiselResult:
     def numpy(self) -> dict:
         """Convenience: the images as numpy arrays."""
         return {k: getattr(self, k).cpu().numpy() for k in ("detections", "labels", "sky", "std")}
+
+
+def _host(device) -> torch.device:
+    """Device for float64 arithmetic and the tile-grid arrays: the run device,
+    except on MPS (no float64), where it is the CPU.  Always move a tensor
+    there *before* converting it to float64."""
+    device = torch.device(device)
+    return torch.device("cpu") if device.type == "mps" else device
+
+
+def _bincount(x: torch.Tensor, minlength: int) -> torch.Tensor:
+    """``torch.bincount`` of a label tensor, result on its device.  On MPS it
+    counts on the host: the GPU kernel takes about a minute on a frame where
+    one label covers most pixels."""
+    return torch.bincount(x.to(_host(x.device)), minlength=minlength).to(x.device)
 
 
 # ==========================================================================
@@ -318,9 +342,9 @@ def _sort_rows(x: torch.Tensor):
 
 def _quantile_index(n: torch.Tensor, q: float) -> torch.Tensor:
     """``gal_statistics_quantile_index``: round-half-down of (n-1)*q."""
-    fi = (n - 1).clamp(min=0).double() * q
+    fi = (n.to(_host(n.device)) - 1).clamp(min=0).double() * q
     fl = torch.floor(fi)
-    return (fl + ((fi - fl) > 0.5).double()).long()
+    return (fl + ((fi - fl) > 0.5).double()).long().to(n.device)
 
 
 def _row_quantile(xs: torch.Tensor, n: torch.Tensor, q: float) -> torch.Tensor:
@@ -640,11 +664,6 @@ def _interp_smooth(arrays, K, metric, onlyblank, smoothwidth):
 # ==========================================================================
 # Convolution (NaN aware, with edge correction as in gal_convolve_spatial)
 # ==========================================================================
-def _acc_dtype(device) -> torch.dtype:
-    """float64 accumulator, except on backends without float64 (MPS)."""
-    return torch.float32 if torch.device(device).type == "mps" else torch.float64
-
-
 def _tap_sum(x: torch.Tensor, kernel: torch.Tensor, H: int, W: int, acc_dtype):
     """Sum over kernel taps (raster order) of float32 products, accumulated
     in ``acc_dtype``: the arithmetic of ``gal_convolve_spatial``.  ``x`` is
@@ -663,13 +682,19 @@ def _convolve(img: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
     kernel is applied as a correlation, each float32 product is accumulated
     in double and divided by the sum of the overlapping (non-NaN) kernel
     values.  This reproduces Gnuastro bit by bit (float64 ``conv2d`` would
-    differ by an ulp, which matters when Sky >> noise)."""
+    differ by an ulp, which matters when Sky >> noise).  MPS images use the
+    Metal shader, or the CPU where it cannot guarantee the same result."""
     kh, kw = kernel.shape
     if kh % 2 == 0 or kw % 2 == 0:
         raise ValueError("kernel sizes must be odd")
+    if img.device.type == "mps":
+        out = _mps.convolve(img, kernel)
+        if out is None:
+            out = _convolve(img.cpu(), kernel.cpu()).to(img.device)
+        return out
     H, W = img.shape
     ph, pw = kh // 2, kw // 2
-    acc_dtype = _acc_dtype(img.device)
+    acc_dtype = torch.float64
     kernel = kernel.to(torch.float32)
     ok = ~torch.isnan(img)
     allok = bool(ok.all())
@@ -884,10 +909,9 @@ class _Canvas:
             return m.clone()
         outside = torch.zeros(n + 1, dtype=torch.bool, device=m.device)
         outside[lab[self.border & inv].long()] = True
-        sizes = torch.bincount(lab.reshape(-1).long(), minlength=n + 1)
         is_hole = ~outside
         if maxsize is not None:
-            is_hole &= sizes <= maxsize
+            is_hole &= _bincount(lab.reshape(-1).long(), n + 1) <= maxsize
         is_hole[0] = False
         return self.back(c | is_hole[lab.long()])
 
@@ -901,7 +925,8 @@ class NoiseChisel:
     Parameters
     ----------
     device : str | torch.device | None
-        Default: CUDA if available, else CPU.
+        Default: CUDA if available, else CPU.  ``"mps"`` (Apple GPU) must be
+        requested explicitly and needs torch 2.7 or later.
     kernel : "default" | None | array-like
         Sharp convolution kernel (Gnuastro's default 11x11 Gaussian,
         FWHM=2 px).  ``None`` disables convolution.
@@ -932,12 +957,11 @@ class NoiseChisel:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
         if self.device.type == "mps":
-            # Tile statistics and the convolution need float64 accumulation
-            # to reproduce Gnuastro (Sky levels can be >> noise), which MPS
-            # does not provide.
-            warnings.warn("MPS has no float64 support: running NoiseChisel on the CPU",
-                          RuntimeWarning, stacklevel=2)
-            self.device = torch.device("cpu")
+            reason = _mps.unsupported_reason()
+            if reason:
+                warnings.warn(f"{reason}: running NoiseChisel on the CPU",
+                              RuntimeWarning, stacklevel=2)
+                self.device = torch.device("cpu")
         if ccl not in ("auto", "cupy", "scipy"):
             raise ValueError("ccl must be 'auto', 'cupy' or 'scipy'")
         if ccl == "auto":
@@ -993,6 +1017,8 @@ class NoiseChisel:
         if self.verbose:
             if self.device.type == "cuda":
                 torch.cuda.synchronize()
+            elif self.device.type == "mps":
+                torch.mps.synchronize()
             dt = "" if t0 is None else f" ({time.perf_counter() - t0:.2f}s)"
             print(f"  - {msg}{dt}")
         return time.perf_counter()
@@ -1007,8 +1033,8 @@ class NoiseChisel:
     def _quantile_thresholds(self, grid, conv, wconv):
         p = self.p
         ny, nx = grid.ny, grid.nx
-        dev = self.device
-        nanf = lambda: torch.full((ny, nx), float("nan"), dtype=torch.float32, device=dev)
+        host = _host(self.device)
+        nanf = lambda: torch.full((ny, nx), float("nan"), dtype=torch.float32, device=host)
         e_th, ne_th, ex_th = nanf(), nanf(), nanf()
         meanconv = wconv if wconv is not None else conv
         mmq = float(np.float32(p.meanmedqdiff))
@@ -1019,29 +1045,31 @@ class NoiseChisel:
             tm = grid.gather(meanconv, r0, r1, float("nan"))
             xs, n = _sort_rows(tm)
             P = xs.shape[1]
-            mean = (torch.where(torch.isnan(tm), torch.zeros_like(tm), tm).double().sum(1)
-                    / n.clamp(min=1)).float()
+            nh = n.to(host)
+            mean = (torch.where(torch.isnan(tm), torch.zeros_like(tm), tm).to(host).double().sum(1)
+                    / nh.clamp(min=1)).float().to(self.device)
             j = torch.searchsorted(xs, mean[:, None], right=True).squeeze(1)
             a_prev = xs.gather(1, (j - 1).clamp(0, P - 1)[:, None]).squeeze(1)
             a_j = xs.gather(1, j.clamp(0, P - 1)[:, None]).squeeze(1)
             parsed = (n >= 2) & (mean >= xs[:, 0]) & (j >= 1) & (j < n)
             idx = torch.where((mean - a_prev) < (a_j - mean), j - 1, j)
-            q = idx.double() / (n - 1).clamp(min=1).double()
-            good = parsed & ((q - 0.5).abs() < mmq)
+            q = idx.to(host).double() / (nh - 1).clamp(min=1).double()
+            good = parsed.to(host) & ((q - 0.5).abs() < mmq)
             del tm
             if not bool(good.any()):
                 continue
+            gd = good.to(self.device)
             if wconv is not None:
-                tc = grid.gather(conv, r0, r1, float("nan"))[good]
+                tc = grid.gather(conv, r0, r1, float("nan"))[gd]
                 xq, nq = _sort_rows(tc)
             else:
-                xq, nq = xs[good], n[good]
+                xq, nq = xs[gd], n[gd]
             gi = torch.nonzero(good).squeeze(1)
             for out, qq in ((e_th, p.qthresh), (ne_th, p.noerodequant),
                             (ex_th, p.detgrowquant if want_expand else None)):
                 if qq is None:
                     continue
-                v = _row_quantile(xq, nq, qq)
+                v = _row_quantile(xq, nq, qq).to(host)
                 flat = out.view(-1)
                 flat[r0 * nx + gi] = v
         return e_th, ne_th, ex_th
@@ -1071,11 +1099,12 @@ class NoiseChisel:
         p = self.p
         ny, nx = grid.ny, grid.nx
         dev = self.device
-        sky = torch.full((ny, nx), float("nan"), dtype=torch.float64, device=dev).view(-1)
+        host = _host(dev)
+        sky = torch.full((ny, nx), float("nan"), dtype=torch.float64, device=host).view(-1)
         std = sky.clone()
         minfrac = torch.tensor(np.float32(p.minskyfrac), device=dev)
         k = grid.rows_per_chunk(self.chunk_elems)
-        nosky = noskytiles.reshape(-1)
+        nosky = noskytiles.reshape(-1).to(dev)
         for r0 in range(0, ny, k):
             r1 = min(ny, r0 + k)
             x = grid.gather(img, r0, r1, float("nan"))
@@ -1092,12 +1121,13 @@ class NoiseChisel:
                 continue
             xv = torch.where(und[sel], x[sel], torch.full((), float("nan"), device=dev))
             xs, n = _sort_rows(xv)
-            med, mean, sd = _sigma_clip_rows(xs, n, p.sigmaclip[0], p.sigmaclip[1])
+            med, mean, sd = _sigma_clip_rows(xs.to(host), n.to(host),
+                                             p.sigmaclip[0], p.sigmaclip[1])
             # sky.c tests output column 3 (the clipped *median*) against 0.
             zero = med.float() == 0
             mean = torch.where(zero, torch.full_like(mean, float("nan")), mean)
             sd = torch.where(zero, torch.full_like(sd, float("nan")), sd)
-            gi = r0 * nx + torch.nonzero(sel).squeeze(1)
+            gi = r0 * nx + torch.nonzero(sel.to(host)).squeeze(1)
             sky[gi] = mean
             std[gi] = sd
         sky = sky.view(ny, nx).float()
@@ -1120,6 +1150,9 @@ class NoiseChisel:
         """S/N of each label, as ``detection_sn``: Sky-subtracted flux
         (float32) summed in double, flux-weighted centre to pick the STD."""
         p = self.p
+        dev = self.device
+        host = _host(dev)
+        sky_t, std_t = sky_t.to(dev), std_t.to(host)
         H, W = labels.shape
         flat = labels.reshape(-1)
         idx = torch.nonzero(flat > 0).squeeze(1)
@@ -1127,7 +1160,9 @@ class NoiseChisel:
         y, x = idx // W, idx % W
         val = img.reshape(-1)[idx] - sky_t[grid.row_tile_c[y], grid.col_tile_c[x]]
         ok = ~torch.isnan(val)
-        idx, lab, val, y, x = idx[ok], lab[ok], val[ok].double(), y[ok], x[ok]
+        lab, val, y, x = (t[ok].to(host) for t in (lab, val, y, x))
+        val = val.double()
+        row_tile, col_tile = grid.row_tile_c.to(host), grid.col_tile_c.to(host)
         L = num + 1
         area = torch.bincount(lab, minlength=L).double()
         bright = torch.bincount(lab, weights=val, minlength=L)
@@ -1136,7 +1171,7 @@ class NoiseChisel:
         py = torch.bincount(lab, weights=pos * y.double(), minlength=L)
         px = torch.bincount(lab, weights=pos * x.double(), minlength=L)
         if exclude is not None:
-            area = torch.where(exclude, torch.zeros_like(area), area)
+            area = torch.where(exclude.to(host), torch.zeros_like(area), area)
         ave = bright / area.clamp(min=1)
         cond = (area >= p.snminarea) & (ave > 0) & (ps > 0)
         cond[0] = False
@@ -1148,23 +1183,51 @@ class NoiseChisel:
 
         cy = rnd(py / psafe).clamp(0, H - 1)
         cx = rnd(px / psafe).clamp(0, W - 1)
-        err = std_t[grid.row_tile_c[cy], grid.col_tile_c[cx]].double()
+        err = std_t[row_tile[cy], col_tile[cx]].double()
         # sqrt((float)area / cpscorr): float division, double sqrt
         a_c = (area.float() / torch.tensor(cpscorr, dtype=torch.float32)).double()
         sn = torch.sqrt(a_c) * ave / torch.sqrt((ave + err * err).clamp(min=1e-300))
-        return torch.where(cond, sn, torch.full_like(sn, float("nan"))).float()
+        return torch.where(cond, sn, torch.full_like(sn, float("nan"))).float().to(dev)
 
     # ----------------------------------------------------------------- main
     @torch.no_grad()
     def __call__(self, image) -> NoiseChiselResult:
         if self.numthreads is None:
-            return self._run(image)
+            return self._dispatch(image)
         prev = torch.get_num_threads()
         torch.set_num_threads(self.numthreads)
         try:
-            return self._run(image)
+            return self._dispatch(image)
         finally:
             torch.set_num_threads(prev)
+
+    def _dispatch(self, image) -> NoiseChiselResult:
+        if self.device.type != "mps":
+            return self._run(image)
+        if not torch.is_tensor(image):
+            image = torch.from_numpy(np.array(image, dtype=np.float32))
+        image = image.cpu().to(torch.float32)
+        if not _mps.safe_range(image):
+            reason = ("the image has non-zero values outside [2^-100, 2^100], which the "
+                      "Apple GPU may flush to zero or overflow")
+        else:
+            try:
+                return self._run(image)
+            except NotImplementedError as e:       # operator missing on MPS
+                reason = str(e).splitlines()[0]
+            except RuntimeError as e:
+                if "MPS" not in str(e):
+                    raise
+                reason = str(e).splitlines()[0]
+        warnings.warn(f"running NoiseChisel on the CPU: {reason}", RuntimeWarning, stacklevel=3)
+        return self._on_cpu()._run(image)
+
+    def _on_cpu(self) -> "NoiseChisel":
+        cpu = copy.copy(self)
+        cpu.device = torch.device("cpu")
+        cpu.kernel, cpu.widekernel = (None if k is None else k.cpu()
+                                      for k in (self.kernel, self.widekernel))
+        return cpu
 
     def _run(self, image) -> NoiseChiselResult:
         p = self.p
@@ -1173,10 +1236,10 @@ class NoiseChisel:
         if not torch.is_tensor(image):
             # e.g. astropy.io.fits.getdata(): big-endian and/or integer arrays
             image = np.asarray(image, dtype=np.float32)
-        img = torch.as_tensor(image).to(dev)
+        img = torch.as_tensor(image)
         if img.ndim != 2:
             raise ValueError("only 2D images are supported")
-        img = img.to(torch.float32).contiguous()
+        img = img.to(torch.float32).to(dev).contiguous()    # float32 first: MPS has no float64
         H, W = img.shape
         img = torch.where(torch.isinf(img), torch.full_like(img, float("nan")), img)
         grid = _Grid((H, W), p.tilesize, p.remainderfrac, dev)
@@ -1195,7 +1258,7 @@ class NoiseChisel:
         # 2. quantile thresholds on tiles --------------------------------
         e_th, ne_th, ex_th = self._quantile_thresholds(grid, conv, wconv)
         e_th, ne_th, ex_th = self._remove_outliers([e_th, ne_th, ex_th])
-        noskytiles = torch.isnan(e_th)
+        noskytiles = torch.isnan(e_th)                      # tile arrays are on the host
         nval = int((~noskytiles).sum())
         if nval < p.interpnumngb:
             raise ValueError(
@@ -1204,8 +1267,8 @@ class NoiseChisel:
                 "`meanmedqdiff`, or smaller `interpnumngb`.")
         arrs = [e_th, ne_th] + ([ex_th] if p.detgrowquant != 1.0 else [])
         arrs = _interp_smooth(arrs, p.interpnumngb, p.interpmetric, p.interponlyblank, p.smoothwidth)
-        e_th, ne_th = arrs[0], arrs[1]
-        ex_th = arrs[2] if len(arrs) > 2 else None
+        e_th, ne_th = arrs[0].to(dev), arrs[1].to(dev)
+        ex_th = arrs[2].to(dev) if len(arrs) > 2 else None
         t = self._log("quantile thresholds found", t)
 
         # 3. initial detections -------------------------------------------
@@ -1219,8 +1282,8 @@ class NoiseChisel:
 
         # 4. initial sky / std, pseudo-detections -------------------------
         sky_t, std_t, _, cpscorr = self._sky_and_std(grid, img, olabel > 0, noskytiles)
-        sub = img - grid.expand(sky_t)
-        dbin = sub > p.dthresh * grid.expand(std_t)
+        sub = img - grid.expand(sky_t.to(dev))
+        dbin = sub > p.dthresh * grid.expand(std_t.to(dev))
         opos = olabel > 0
         t = self._log("initial sky found", t)
 
@@ -1232,7 +1295,7 @@ class NoiseChisel:
 
         if p.snthresh is None:
             plab, npse = pseudo(False)
-            touches = torch.bincount(plab[opos & (plab > 0)].long(), minlength=npse + 1) > 0
+            touches = _bincount(plab[opos & (plab > 0)].long(), npse + 1) > 0
             sn = self._label_sn(grid, plab, npse, img, sky_t, std_t, cpscorr, exclude=touches)
             sn = sn[~torch.isnan(sn)]
             if sn.numel() < p.minnumfalse:
@@ -1253,7 +1316,7 @@ class NoiseChisel:
         t = self._log(f"pseudo-detection S/N threshold {snthr:.3f}", t)
 
         # 5. keep initial detections that contain a true pseudo-detection --
-        hit = torch.bincount(olabel[true_pseudo & opos].long(), minlength=ninit + 1) > 0
+        hit = _bincount(olabel[true_pseudo & opos].long(), ninit + 1) > 0
         hit[0] = False
         binary = hit[olabel]
         newlab = (torch.cumsum(hit, 0) * hit).to(torch.int32)
@@ -1269,7 +1332,7 @@ class NoiseChisel:
             else:
                 M = binary | cand
                 comp, nc = self._label(M, 8)
-                has = torch.bincount(comp[binary].long(), minlength=nc + 1) > 0
+                has = _bincount(comp[binary].long(), nc + 1) > 0
                 has[0] = False
                 grown = has[comp]
                 grown = whole.dilate(grown, 1, 4)
@@ -1293,6 +1356,7 @@ class NoiseChisel:
 
         # 7. final sky and std --------------------------------------------
         sky_f, std_f, (mn, md, mx), _ = self._sky_and_std(grid, img, binary, noskytiles)
+        sky_f, std_f = sky_f.to(dev), std_f.to(dev)
         # Tile values -> full-resolution images; blank input pixels stay blank.
         blank = torch.isnan(img)
         rows, cols = grid.row_tile[:, None], grid.col_tile[None, :]
